@@ -40,3 +40,6 @@ output/reports/*
 
 # Logs
 *.log
+
+# Keep small cleaned public macro file
+!input/external/welch_goyal_macro_1990_2025.csv

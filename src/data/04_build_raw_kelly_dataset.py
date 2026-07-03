@@ -1,10 +1,11 @@
 """Create the raw Kelly-style predictor dataset.
 
 This file constructs the raw model panel:
+
 1. Add SIC2 industry dummies
-2. Create macro-state variables
+2. Create Welch-Goyal-style macro-state proxies
 3. Select stock characteristics
-4. Create characteristic x macro interactions
+4. Create stock characteristic x macro-state interactions
 5. Save the raw full dataset
 
 Final cleaning, splitting, winsorization, imputation, and rank-normalization
@@ -12,26 +13,175 @@ are done in file 05.
 """
 
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
 
 
-# 1) Settings
-DATA_DIR = Path("output/data")
-INPUT_FILE = DATA_DIR / "intermediate/monthly_panel_with_compustat_macro_1990_2025.csv"
-OUTPUT_DIR = DATA_DIR / "final/kelly_style"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# Allow direct execution from the project root:
+# python src/data/04_build_raw_kelly_dataset.py
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(PROJECT_ROOT))
 
-FULL_FILE = OUTPUT_DIR / "model_dataset_kelly_raw_full_1990_2025.csv"
-PREDICTOR_FILE = OUTPUT_DIR / "predictor_columns_kelly_raw.csv"
-SUMMARY_FILE = OUTPUT_DIR / "kelly_raw_dataset_summary.csv"
+from src.config import (  # noqa: E402
+    TARGET,
+    PANEL_WITH_FUNDAMENTALS_FILE,
+    WELCH_GOYAL_CLEAN_FILE,
+    RAW_KELLY_FILE,
+    RAW_PREDICTOR_FILE,
+    RAW_KELLY_SUMMARY_FILE,
+)
 
-TARGET = "target_excess_return_next_1m"
+CHARACTERISTIC_COLUMNS = [
+    # ------------------------------------------------------------
+    # Return and momentum characteristics
+    # ------------------------------------------------------------
+    "ret_1m",
+    "mom1m",
+    "mom3m",
+    "mom6m",
+    "mom12m",
+    "mom36m",
+    "chmom",
 
+    # ------------------------------------------------------------
+    # Volatility, downside/upside return, and market risk
+    # ------------------------------------------------------------
+    "retvol_1m",
+    "retvol3m",
+    "retvol6m",
+    "retvol12m",
+    "rvol_21d",
+    "maxret_1m",
+    "minret_1m",
+    "rmax1_21d",
+    "rmax5_21d",
+    "beta_12m",
+    "betasq_12m",
+    "idiovol_12m",
 
-# 2) Create industry and macro-state variables
+    # ------------------------------------------------------------
+    # Liquidity and trading activity
+    # ------------------------------------------------------------
+    "avg_volume_1m",
+    "std_volume_1m",
+    "avg_dolvol_1m",
+    "std_dolvol_1m",
+    "avg_log_dolvol_1m",
+    "amihud_1m",
+    "ami_126d",
+    "zerotrade_1m",
+    "zero_trades_21d",
+    "zero_trades_126d",
+    "dolvol_126d",
+    "dolvol_var_126d",
+    "volume_growth_1m",
+    "dolvol_growth_1m",
+
+    # ------------------------------------------------------------
+    # Price level and trend variables
+    # ------------------------------------------------------------
+    "last_adj_close",
+    "last_close",
+    "price_to_ma3",
+    "price_to_ma12",
+    "ma3_to_ma12",
+    "dist_from_high_12m",
+    "avg_range_1m",
+    "max_range_1m",
+
+    # ------------------------------------------------------------
+    # Valuation characteristics
+    # ------------------------------------------------------------
+    "bm_comp",
+    "be_me",
+    "at_me",
+    "sale_me",
+    "ni_me",
+    "ocf_me",
+    "debt_me",
+    "log_comp_market_equity",
+
+    # ------------------------------------------------------------
+    # Profitability characteristics
+    # ------------------------------------------------------------
+    "profitability_oiadp_at",
+    "profitability_oibdp_at",
+    "gp_at",
+    "op_at",
+    "roa_ni_at",
+    "roa_ib_at",
+    "roe_ni_be",
+    "ni_be",
+    "ocf_at",
+
+    # ------------------------------------------------------------
+    # Leverage, balance-sheet strength, and tangibility
+    # ------------------------------------------------------------
+    "leverage_debt_at",
+    "leverage_lt_at",
+    "debt_at",
+    "cash_at",
+    "working_capital_at",
+    "current_ratio",
+    "tangibility",
+
+    # ------------------------------------------------------------
+    # Investment and asset composition
+    # ------------------------------------------------------------
+    "capx_at",
+    "rd_at",
+    "sga_at",
+    "ppe_at",
+    "gross_ppe_at",
+    "intangibles_at",
+    "goodwill_at",
+    "inventory_at",
+    "receivables_at",
+    "payables_at",
+
+    # ------------------------------------------------------------
+    # Margins and operating efficiency
+    # ------------------------------------------------------------
+    "gross_margin",
+    "operating_margin",
+    "net_margin",
+    "asset_turnover",
+
+    # ------------------------------------------------------------
+    # Accruals, payout, and financing
+    # ------------------------------------------------------------
+    "accruals_at",
+    "oaccruals_at",
+    "dividends_at",
+    "dividend_yield_comp",
+    "dividend_dummy",
+    "debt_issuance_at",
+    "debt_reduction_at",
+    "equity_issuance_at",
+    "repurchase_at",
+    "share_turnover_comp",
+
+    # ------------------------------------------------------------
+    # Growth characteristics
+    # ------------------------------------------------------------
+    "asset_growth",
+    "sales_growth",
+    "revenue_growth",
+    "book_equity_growth",
+    "market_equity_growth_comp",
+    "be_gr1a",
+    "inv_gr1a",
+    "ppeinv_gr1a",
+    "investment_asset_growth",
+]
+
+# ---------------------------------------------------------------------
+# 1) Helper functions
+# ---------------------------------------------------------------------
 def aggregate_ratio(numerator, denominator):
+    """Compute a cross-sectional aggregate ratio."""
     numerator = pd.to_numeric(numerator, errors="coerce").sum(min_count=1)
     denominator = pd.to_numeric(denominator, errors="coerce").sum(min_count=1)
 
@@ -42,7 +192,8 @@ def aggregate_ratio(numerator, denominator):
 
 
 def first_available(group, column):
-    if column not in group:
+    """Take the first non-missing value of a monthly macro or market variable."""
+    if column not in group.columns:
         return np.nan
 
     values = pd.to_numeric(group[column], errors="coerce").dropna()
@@ -53,170 +204,140 @@ def first_available(group, column):
     return values.iloc[0]
 
 
+# ---------------------------------------------------------------------
+# 2) Industry dummies and macro-state variables
+# ---------------------------------------------------------------------
 def add_industry_dummies(data):
-    """Kelly-style industry controls using SIC2 dummies."""
+    """Add Kelly-style industry controls using SIC2 dummies."""
     sic2 = pd.get_dummies(
-        pd.to_numeric(data.sic2, errors="coerce").fillna(-1).astype(int),
+        pd.to_numeric(data["sic2"], errors="coerce").fillna(-1).astype(int),
         prefix="sic2",
         dtype=int,
-    ).rename(columns={"sic2_-1": "sic2_missing"})
+    )
+
+    sic2 = sic2.rename(columns={"sic2_-1": "sic2_missing"})
 
     data = pd.concat([data, sic2], axis=1)
 
     return data, list(sic2.columns)
 
 
-def add_macro_proxies(data):
-    """Create the 8 Welch-Goyal-style macro variables used for interactions."""
-    rows = []
+def add_welch_goyal_macro(data):
+    """Add clean Welch-Goyal macro variables used for interactions."""
+    macro = pd.read_csv(WELCH_GOYAL_CLEAN_FILE)
+    macro["month"] = pd.to_datetime(macro["month"])
 
-    for month, group in data.groupby("month"):
-        equity_issuance = pd.to_numeric(group.equity_issuance_at, errors="coerce")
-        repurchases = pd.to_numeric(group.repurchase_at, errors="coerce")
-
-        rows.append({
-            "month": month,
-            "wg_bm_proxy": aggregate_ratio(group.book_equity, group.comp_market_equity),
-            "wg_ep_proxy": aggregate_ratio(group.comp_ni, group.comp_market_equity),
-            "wg_dp_proxy": pd.to_numeric(group.dividend_yield_comp, errors="coerce").median(),
-            "wg_ntis_proxy": (equity_issuance - repurchases).median(),
-            "wg_tbl": first_available(group, "macro_tbill_3m_rate_dec_lag1"),
-            "wg_tms": first_available(group, "macro_term_spread_lag1"),
-            "wg_dfy": first_available(group, "macro_default_spread_lag1"),
-            "wg_svar_proxy": first_available(group, "market_vol_1m") ** 2,
-        })
-
-    names = [
-        "wg_bm_proxy",
-        "wg_ep_proxy",
-        "wg_dp_proxy",
-        "wg_ntis_proxy",
+    macro_names = [
+        "wg_dp",
+        "wg_ep",
+        "wg_bm",
+        "wg_ntis",
         "wg_tbl",
         "wg_tms",
         "wg_dfy",
-        "wg_svar_proxy",
+        "wg_svar",
     ]
 
-    macro = pd.DataFrame(rows).sort_values("month")
-    macro[names] = macro[names].replace([np.inf, -np.inf], np.nan).ffill().bfill().fillna(0)
+    missing = [name for name in macro_names if name not in macro.columns]
 
-    data = data.merge(macro, on="month", how="left")
+    if missing:
+        raise ValueError(f"Missing clean Welch-Goyal variables: {missing}")
 
-    return data, names
-
-
-# 3) Select stock characteristics and create interactions
-def select_characteristics(data, macro_names):
-    """
-    Select stock-level characteristics c_i,t.
-
-    We exclude identifiers, targets, macro variables, market-wide variables,
-    industry codes, and construction flags.
-    """
-    exclude = {
-        "ticker",
-        "month",
-        "first_date",
-        "last_date",
-
-        TARGET,
-        "target_return_next_1m",
-        "RF_next_1m",
-
-        "gvkey",
-        "comp_conm",
-        "comp_cusip",
-        "comp_cik",
-        "comp_datadate",
-        "comp_available_month",
-        "comp_fyear",
-        "comp_fyr",
-        "comp_sic",
-        "comp_naics",
-        "comp_gsector",
-        "comp_ggroup",
-        "comp_gind",
-        "comp_gsubind",
-        "sic2",
-
-        "Mkt_RF",
-        "SMB",
-        "HML",
-        "RF",
-
-        "gspc_last_adj_close",
-        "market_ret_1m",
-        "market_vol_1m",
-        "market_maxret_1m",
-        "market_minret_1m",
-
-        "vix_last_close",
-        "vix_avg_1m",
-        "vix_max_1m",
-        "vix_min_1m",
-        "vix_change_1m",
-
-        "has_compustat_annual",
-        "xrd_missing",
-        "xsga_missing",
-        "beta_obs_daily",
-    } | set(macro_names)
-
-    bad_prefixes = (
-        "target_",
-        "macro_",
-        "wg_",
-        "sic2_",
-        "sector_",
+    data = data.merge(
+        macro[["month"] + macro_names],
+        on="month",
+        how="left",
     )
 
+    return data, macro_names
+
+
+# ---------------------------------------------------------------------
+# 3) Select stock characteristics and create interactions
+# ---------------------------------------------------------------------
+def select_characteristics(data, macro_names):
+    """Select manually chosen stock characteristics.
+
+    The goal is not to exactly reproduce all Kelly/Gu-Xiu characteristics.
+    Some original characteristics require CRSP bid-ask spreads, quarterly
+    earnings-announcement data, analyst-type data, or other unavailable fields.
+
+    Instead, we keep only characteristics that we constructed directly from
+    Yahoo daily prices and Compustat annual fundamentals and that we can defend.
+    """
     characteristics = [
         name
-        for name in data.select_dtypes(include=[np.number, "bool"]).columns
-        if name not in exclude
-        and not name.startswith(bad_prefixes)
+        for name in CHARACTERISTIC_COLUMNS
+        if name in data.columns
+        and pd.api.types.is_numeric_dtype(data[name])
         and not data[name].isna().all()
     ]
 
+    missing_from_data = [
+        name
+        for name in CHARACTERISTIC_COLUMNS
+        if name not in data.columns
+    ]
+
+    if missing_from_data:
+        print("Requested characteristics not found and skipped:")
+        print(missing_from_data)
+
+    print(f"Selected defensible stock characteristics: {len(characteristics)}")
+
     return characteristics
 
-
 def add_interactions(data, characteristics, macro_names):
-    """Create characteristic x macro-state interactions."""
+    """Create stock characteristic x macro-state interactions."""
     blocks = []
     interaction_names = []
 
     for macro in macro_names:
-        macro_values = pd.to_numeric(data[macro], errors="coerce").astype("float32")
+        macro_values = pd.to_numeric(
+            data[macro],
+            errors="coerce",
+        ).astype("float32")
 
-        block = pd.DataFrame({
-            f"{char}_x_{macro}":
-            pd.to_numeric(data[char], errors="coerce").astype("float32") * macro_values
-            for char in characteristics
-        }, index=data.index)
+        block = pd.DataFrame(
+            {
+                f"{characteristic}_x_{macro}": (
+                    pd.to_numeric(
+                        data[characteristic],
+                        errors="coerce",
+                    ).astype("float32")
+                    * macro_values
+                )
+                for characteristic in characteristics
+            },
+            index=data.index,
+        )
 
         blocks.append(block)
         interaction_names.extend(block.columns.tolist())
 
-    interactions = pd.concat(blocks, axis=1).replace([np.inf, -np.inf], np.nan)
+    interactions = pd.concat(blocks, axis=1)
+    interactions = interactions.replace([np.inf, -np.inf], np.nan)
+
     data = pd.concat([data, interactions], axis=1)
 
     return data, interaction_names
 
 
+# ---------------------------------------------------------------------
 # 4) Save raw model data
+# ---------------------------------------------------------------------
 def prepare_model_data(data, characteristics, interactions, sic2_dummies):
     """Save the raw Kelly-style model dataset.
 
     Cleaning and normalization are deliberately not done here.
-    They are moved to file 05 so the cleaning stage is visible.
+    They are done in file 05.
     """
     predictors = characteristics + interactions + sic2_dummies
 
     predictors = [
         name
         for name in predictors
-        if name in data and not data[name].isna().all()
+        if name in data.columns and not data[name].isna().all()
     ]
 
     columns = ["ticker", "month", TARGET] + predictors
@@ -233,8 +354,8 @@ def prepare_model_data(data, characteristics, interactions, sic2_dummies):
     if duplicate_rows:
         raise ValueError(f"Duplicate ticker-month rows found: {duplicate_rows}")
 
-    full.to_csv(FULL_FILE, index=False)
-    pd.DataFrame({"predictor": predictors}).to_csv(PREDICTOR_FILE, index=False)
+    full.to_csv(RAW_KELLY_FILE, index=False)
+    pd.DataFrame({"predictor": predictors}).to_csv(RAW_PREDICTOR_FILE, index=False)
 
     summary = {
         "raw_rows": len(full),
@@ -245,33 +366,37 @@ def prepare_model_data(data, characteristics, interactions, sic2_dummies):
         "sic2_dummies_raw": len(sic2_dummies),
         "missing_targets_raw": missing_targets,
         "duplicate_ticker_months_raw": duplicate_rows,
-        "first_month": full.month.min(),
-        "last_month": full.month.max(),
+        "first_month": full["month"].min(),
+        "last_month": full["month"].max(),
     }
 
-    pd.DataFrame(summary.items(), columns=["item", "value"]).to_csv(SUMMARY_FILE, index=False)
+    pd.DataFrame(
+        summary.items(),
+        columns=["item", "value"],
+    ).to_csv(RAW_KELLY_SUMMARY_FILE, index=False)
 
     return full, predictors, summary
 
 
-# 5) Run the pipeline
+# ---------------------------------------------------------------------
+# 5) Run pipeline
+# ---------------------------------------------------------------------
 def main():
-    data = pd.read_csv(INPUT_FILE, low_memory=False)
+    data = pd.read_csv(PANEL_WITH_FUNDAMENTALS_FILE, low_memory=False)
 
-    data["month"] = pd.to_datetime(data.month)
-    data["ticker"] = data.ticker.astype(str).str.upper().str.strip()
+    data["month"] = pd.to_datetime(data["month"])
+    data["ticker"] = data["ticker"].astype(str).str.upper().str.strip()
 
     data, sic2_dummies = add_industry_dummies(data)
-    data, macro_names = add_macro_proxies(data)
-
+    data, macro_names = add_welch_goyal_macro(data)
     characteristics = select_characteristics(data, macro_names)
     data, interactions = add_interactions(data, characteristics, macro_names)
 
     full, predictors, summary = prepare_model_data(
-        data,
-        characteristics,
-        interactions,
-        sic2_dummies,
+        data=data,
+        characteristics=characteristics,
+        interactions=interactions,
+        sic2_dummies=sic2_dummies,
     )
 
     print(f"Saved raw Kelly dataset: {full.shape}")
@@ -281,7 +406,7 @@ def main():
     print(f"SIC2 dummies raw: {summary['sic2_dummies_raw']}")
     print(f"Missing targets raw: {summary['missing_targets_raw']}")
     print(f"Duplicate ticker-months raw: {summary['duplicate_ticker_months_raw']}")
-    print(f"Date range: {full.month.min()} to {full.month.max()}")
+    print(f"Date range: {full['month'].min()} to {full['month'].max()}")
 
 
 if __name__ == "__main__":
