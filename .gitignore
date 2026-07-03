@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Mac
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Ignore raw inputs and generated outputs
+input/raw/*
+input/external/*
+output/data/*
+output/models/*
+output/reports/*
+
+# Keep folder structure
+!input/raw/.gitkeep
+!input/external/.gitkeep
+!output/data/intermediate/
+!output/data/intermediate/.gitkeep
+!output/data/final/
+!output/data/final/.gitkeep
+!output/models/.gitkeep
+!output/reports/.gitkeep
+
+# Large data/model files
+*.csv
+*.parquet
+*.xlsx
+*.zip
+*.h5
+*.pkl
+*.joblib
+
+# Logs
+*.log
