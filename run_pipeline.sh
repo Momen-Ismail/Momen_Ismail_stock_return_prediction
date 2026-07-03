@@ -17,7 +17,4 @@ python src/data/04_build_raw_kelly_dataset.py
 echo "05 - Clean and rank-normalize dataset"
 python src/data/05_clean_and_rank_normalize.py
 
-echo "06 - Inspect final dataset"
-python src/data/06_inspect_final_dataset.py
-
 echo "Pipeline completed."
