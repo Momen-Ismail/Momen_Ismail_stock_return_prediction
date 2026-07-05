@@ -1,35 +1,32 @@
-"""Inspect the final cleaned modeling dataset.
+"""Inspect the final cleaned/ranked stock-return ML dataset.
 
-This file does not change or clean the data.
+This script checks the final modeling data created by:
+    src/data/05_clean_and_rank_normalize.py
 
-It checks whether the final model dataset is reasonable and saves diagnostic
-tables and graphs that can be used in the project report.
+Main purpose:
+1. Confirm that the final dataset has no missing values.
+2. Confirm that the target has no missing values.
+3. Confirm that there are no duplicate ticker-month rows.
+4. Check train/validation/test sample sizes.
+5. Check target distribution after winsorization.
+6. Check that ranked predictors are inside [-1, 1].
+7. Save summary tables and diagnostic plots.
 
-Main checks:
-1. Basic shape and sample periods
-2. Missing values and duplicate ticker-month rows
-3. Train / validation / test split sizes
-4. Target distribution and target outliers
-5. Predictor rank-normalization range [-1, 1]
-6. Explanation of negative predictor values
-7. Number of stocks per month
-8. Examples of selected variables
-9. Output tables and plots for documentation
-
-Important interpretation:
-- The target variable is raw next-month excess return.
-- The predictors are rank-normalized by month to [-1, 1].
-- Therefore, negative predictor values are expected and are not data errors.
+Important:
+- This script is diagnostic only.
+- It does not change the data.
+- It should be rerun after the final cleaning file is rerun.
 """
 
 from pathlib import Path
 import sys
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
-# Allow direct execution from the project root:
+# Allow direct execution from project root:
 # python src/data/06_inspect_final_dataset.py
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
@@ -45,25 +42,39 @@ from src.config import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------
-# 1) Load final data
+# 1) Helpers
 # ---------------------------------------------------------------------
+def ensure_report_dir():
+    """Create report output directory if it does not exist."""
+    REPORT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_table(dataframe, filename):
+    """Save a DataFrame to the report folder."""
+    path = REPORT_OUTPUT_DIR / filename
+    dataframe.to_csv(path, index=False)
+    print(f"Saved table: {path}")
+
+
+def save_plot(filename):
+    """Save the current matplotlib figure to the report folder."""
+    path = REPORT_OUTPUT_DIR / filename
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"Saved plot: {path}")
+
+
 def load_data():
-    """Load the cleaned full dataset and recreate the chronological splits.
-
-    Reading only the full Parquet file is enough for inspection and avoids
-    unnecessary repeated Parquet reads.
-    """
+    """Load final full dataset and recreate chronological splits."""
     full = pd.read_parquet(CLEAN_FULL_FILE)
-
     full["month"] = pd.to_datetime(full["month"])
 
     train = full[full["month"] <= TRAIN_END].copy()
-
     validation = full[
         (full["month"] > TRAIN_END)
         & (full["month"] <= VALIDATION_END)
     ].copy()
-
     test = full[full["month"] > VALIDATION_END].copy()
 
     predictors = (
@@ -77,53 +88,113 @@ def load_data():
     return full, train, validation, test, predictors
 
 
-# ---------------------------------------------------------------------
-# 2) Basic dataset checks
-# ---------------------------------------------------------------------
-def create_sample_summary(full, train, validation, test, predictors):
-    """Create summary for full, train, validation, and test samples."""
-    rows = []
+def target_summary(dataframe, name):
+    """Create target summary for one sample."""
+    y = dataframe[TARGET]
 
-    samples = {
-        "full": full,
-        "train": train,
-        "validation": validation,
-        "test": test,
+    return {
+        "sample": name,
+        "rows": len(dataframe),
+        "tickers": dataframe["ticker"].nunique(),
+        "first_month": dataframe["month"].min(),
+        "last_month": dataframe["month"].max(),
+        "target_mean": y.mean(),
+        "target_std": y.std(),
+        "target_min": y.min(),
+        "target_p01": y.quantile(0.01),
+        "target_p05": y.quantile(0.05),
+        "target_p50": y.quantile(0.50),
+        "target_p95": y.quantile(0.95),
+        "target_p99": y.quantile(0.99),
+        "target_max": y.max(),
     }
 
-    for name, data in samples.items():
-        rows.append({
-            "sample": name,
-            "rows": len(data),
-            "columns": data.shape[1],
-            "predictors": len(predictors),
-            "tickers": data["ticker"].nunique(),
-            "first_month": data["month"].min(),
-            "last_month": data["month"].max(),
-            "missing_values": int(data.isna().sum().sum()),
-            "missing_targets": int(data[TARGET].isna().sum()),
-            "duplicate_ticker_months": int(
-                data.duplicated(["ticker", "month"]).sum()
-            ),
-            "target_mean": data[TARGET].mean(),
-            "target_std": data[TARGET].std(),
-            "target_min": data[TARGET].min(),
-            "target_p01": data[TARGET].quantile(0.01),
-            "target_p05": data[TARGET].quantile(0.05),
-            "target_p50": data[TARGET].quantile(0.50),
-            "target_p95": data[TARGET].quantile(0.95),
-            "target_p99": data[TARGET].quantile(0.99),
-            "target_max": data[TARGET].max(),
-        })
 
-    summary = pd.DataFrame(rows)
-    summary.to_csv(REPORT_OUTPUT_DIR / "final_dataset_summary.csv", index=False)
+# ---------------------------------------------------------------------
+# 2) Dataset checks
+# ---------------------------------------------------------------------
+def create_dataset_summary(full, train, validation, test, predictors):
+    """Create one summary table for the final dataset."""
+    duplicated_rows = full.duplicated(["ticker", "month"]).sum()
 
-    return summary
+    summary = pd.DataFrame(
+        [
+            {
+                "item": "full_rows",
+                "value": len(full),
+            },
+            {
+                "item": "full_columns",
+                "value": full.shape[1],
+            },
+            {
+                "item": "predictors",
+                "value": len(predictors),
+            },
+            {
+                "item": "unique_tickers",
+                "value": full["ticker"].nunique(),
+            },
+            {
+                "item": "first_month",
+                "value": full["month"].min(),
+            },
+            {
+                "item": "last_month",
+                "value": full["month"].max(),
+            },
+            {
+                "item": "train_rows",
+                "value": len(train),
+            },
+            {
+                "item": "validation_rows",
+                "value": len(validation),
+            },
+            {
+                "item": "test_rows",
+                "value": len(test),
+            },
+            {
+                "item": "missing_values_final",
+                "value": int(full.isna().sum().sum()),
+            },
+            {
+                "item": "missing_targets_final",
+                "value": int(full[TARGET].isna().sum()),
+            },
+            {
+                "item": "duplicate_ticker_months",
+                "value": int(duplicated_rows),
+            },
+        ]
+    )
+
+    save_table(summary, "final_dataset_summary.csv")
+
+    print("\nSTEP 1: FINAL DATASET SUMMARY")
+    print(summary.to_string(index=False))
+
+
+def create_split_target_summary(train, validation, test, full):
+    """Create target distribution table by sample."""
+    summary = pd.DataFrame(
+        [
+            target_summary(train, "train"),
+            target_summary(validation, "validation"),
+            target_summary(test, "test"),
+            target_summary(full, "full"),
+        ]
+    )
+
+    save_table(summary, "target_summary_by_sample.csv")
+
+    print("\nSTEP 2: TARGET SUMMARY BY SAMPLE")
+    print(summary.to_string(index=False))
 
 
 def create_monthly_panel_summary(full):
-    """Check number of observations and stocks per month."""
+    """Create monthly stock-count summary."""
     monthly = (
         full.groupby("month")
         .agg(
@@ -131,482 +202,226 @@ def create_monthly_panel_summary(full):
             tickers=("ticker", "nunique"),
             target_mean=(TARGET, "mean"),
             target_std=(TARGET, "std"),
-            target_min=(TARGET, "min"),
-            target_max=(TARGET, "max"),
         )
         .reset_index()
     )
 
-    monthly.to_csv(REPORT_OUTPUT_DIR / "monthly_panel_summary.csv", index=False)
+    save_table(monthly, "monthly_panel_summary.csv")
 
-    return monthly
-
-
-# ---------------------------------------------------------------------
-# 3) Target checks
-# ---------------------------------------------------------------------
-def create_target_outlier_report(full):
-    """Save the largest and smallest target observations.
-
-    The target is not rank-normalized or winsorized. Therefore, very large
-    positive or negative returns should be inspected manually.
-    """
-    columns = ["ticker", "month", TARGET]
-
-    largest = (
-        full[columns]
-        .sort_values(TARGET, ascending=False)
-        .head(50)
-        .copy()
+    print("\nSTEP 3: MONTHLY PANEL SUMMARY")
+    print(
+        monthly[["rows", "tickers", "target_mean", "target_std"]]
+        .describe()
+        .to_string()
     )
 
-    smallest = (
-        full[columns]
-        .sort_values(TARGET, ascending=True)
-        .head(50)
-        .copy()
+    plt.figure(figsize=(10, 5))
+    plt.plot(monthly["month"], monthly["tickers"])
+    plt.title("Number of Stocks by Month")
+    plt.xlabel("Month")
+    plt.ylabel("Number of Stocks")
+    save_plot("stock_count_by_month.png")
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(monthly["month"], monthly["target_mean"])
+    plt.title("Mean Target Return by Month")
+    plt.xlabel("Month")
+    plt.ylabel("Mean next-month excess return")
+    save_plot("target_mean_by_month.png")
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(monthly["month"], monthly["target_std"])
+    plt.title("Target Volatility by Month")
+    plt.xlabel("Month")
+    plt.ylabel("Cross-sectional target standard deviation")
+    save_plot("target_volatility_by_month.png")
+
+
+def check_predictor_ranges(full, predictors):
+    """Check that ranked predictors are inside [-1, 1]."""
+    mins = full[predictors].min()
+    maxs = full[predictors].max()
+
+    range_check = pd.DataFrame(
+        {
+            "predictor": predictors,
+            "min": mins.values,
+            "max": maxs.values,
+            "below_minus_one": (mins.values < -1).astype(int),
+            "above_plus_one": (maxs.values > 1).astype(int),
+        }
     )
 
-    largest.to_csv(REPORT_OUTPUT_DIR / "largest_target_returns.csv", index=False)
-    smallest.to_csv(REPORT_OUTPUT_DIR / "smallest_target_returns.csv", index=False)
-
-    return largest, smallest
-
-
-def create_target_extreme_count(full):
-    """Count how many target returns are economically extreme."""
-    thresholds = [0.25, 0.50, 1.00, 2.00, 5.00, 10.00]
-
-    rows = []
-
-    for threshold in thresholds:
-        rows.append({
-            "threshold_abs_return": threshold,
-            "count_above_positive_threshold": int((full[TARGET] > threshold).sum()),
-            "count_below_negative_threshold": int((full[TARGET] < -threshold).sum()),
-            "share_above_positive_threshold": (full[TARGET] > threshold).mean(),
-            "share_below_negative_threshold": (full[TARGET] < -threshold).mean(),
-        })
-
-    extreme_counts = pd.DataFrame(rows)
-    extreme_counts.to_csv(
-        REPORT_OUTPUT_DIR / "target_extreme_return_counts.csv",
-        index=False,
+    range_check["outside_rank_range"] = (
+        range_check["below_minus_one"].astype(bool)
+        | range_check["above_plus_one"].astype(bool)
     )
 
-    return extreme_counts
+    save_table(range_check, "predictor_rank_range_check.csv")
 
+    outside = int(range_check["outside_rank_range"].sum())
 
-# ---------------------------------------------------------------------
-# 4) Predictor checks
-# ---------------------------------------------------------------------
-def create_predictor_range_check(full, predictors):
-    """Check that rank-normalized predictors lie inside [-1, 1]."""
-    ranges = full[predictors].agg(["min", "max", "mean", "std"]).T.reset_index()
-    ranges = ranges.rename(columns={"index": "predictor"})
+    print("\nSTEP 4: PREDICTOR RANK RANGE CHECK")
+    print(f"Predictors checked: {len(predictors)}")
+    print(f"Predictors outside [-1, 1]: {outside}")
 
-    ranges["below_minus_one"] = ranges["min"] < -1.0001
-    ranges["above_plus_one"] = ranges["max"] > 1.0001
-    ranges["inside_rank_range"] = (
-        ~ranges["below_minus_one"] & ~ranges["above_plus_one"]
-    )
-
-    ranges.to_csv(REPORT_OUTPUT_DIR / "predictor_rank_range_check.csv", index=False)
-
-    return ranges
+    if outside > 0:
+        print(
+            range_check[range_check["outside_rank_range"]]
+            .head(30)
+            .to_string(index=False)
+        )
 
 
 def create_predictor_distribution_summary(full, predictors):
-    """Save percentile summary of all predictors."""
-    percentiles = [0.00, 0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99, 1.00]
+    """Summarize final ranked predictor distributions."""
+    selected = predictors[: min(100, len(predictors))]
 
-    summary = (
-        full[predictors]
-        .quantile(percentiles)
-        .T
-        .reset_index()
-        .rename(columns={"index": "predictor"})
+    summary = full[selected].describe(
+        percentiles=[0.01, 0.05, 0.50, 0.95, 0.99]
+    ).T.reset_index()
+
+    summary = summary.rename(columns={"index": "predictor"})
+
+    save_table(summary, "predictor_distribution_summary_first_100.csv")
+
+    negative_summary = pd.DataFrame(
+        {
+            "predictor": predictors,
+            "share_negative": [(full[col] < 0).mean() for col in predictors],
+            "share_zero": [(full[col] == 0).mean() for col in predictors],
+            "share_positive": [(full[col] > 0).mean() for col in predictors],
+        }
     )
 
-    summary.columns = [
-        "predictor",
-        "p00_min",
-        "p01",
-        "p05",
-        "p25",
-        "p50",
-        "p75",
-        "p95",
-        "p99",
-        "p100_max",
-    ]
+    save_table(negative_summary, "predictor_negative_value_summary.csv")
 
-    summary["mean"] = full[predictors].mean().values
-    summary["std"] = full[predictors].std().values
+    print("\nSTEP 5: PREDICTOR DISTRIBUTION SUMMARY")
+    print("Saved distribution summaries for ranked predictors.")
 
-    summary.to_csv(
-        REPORT_OUTPUT_DIR / "predictor_distribution_summary.csv",
-        index=False,
+
+def create_target_diagnostics(full):
+    """Create target distribution diagnostics."""
+    y = full[TARGET]
+
+    largest = (
+        full[["ticker", "month", TARGET]]
+        .sort_values(TARGET, ascending=False)
+        .head(30)
     )
 
-    return summary
-
-
-def create_negative_value_explanation(full, predictors):
-    """Count negative, zero, and positive values for each predictor.
-
-    Negative predictor values are expected because predictors are rank-normalized
-    to [-1, 1]. A negative value means the firm is below the cross-sectional
-    middle for that predictor in that month.
-    """
-    rows = []
-
-    for predictor in predictors:
-        values = full[predictor]
-
-        rows.append({
-            "predictor": predictor,
-            "share_negative": (values < 0).mean(),
-            "share_zero": (values == 0).mean(),
-            "share_positive": (values > 0).mean(),
-            "min": values.min(),
-            "median": values.median(),
-            "max": values.max(),
-        })
-
-    negative_summary = pd.DataFrame(rows)
-
-    negative_summary.to_csv(
-        REPORT_OUTPUT_DIR / "predictor_negative_value_summary.csv",
-        index=False,
+    smallest = (
+        full[["ticker", "month", TARGET]]
+        .sort_values(TARGET, ascending=True)
+        .head(30)
     )
 
-    return negative_summary
+    save_table(largest, "largest_target_returns.csv")
+    save_table(smallest, "smallest_target_returns.csv")
+
+    thresholds = [0.25, 0.50, 1.00, 2.00, 5.00, 10.00]
+
+    counts = pd.DataFrame(
+        {
+            "abs_target_threshold": thresholds,
+            "count": [(y.abs() > threshold).sum() for threshold in thresholds],
+            "share": [(y.abs() > threshold).mean() for threshold in thresholds],
+        }
+    )
+
+    save_table(counts, "target_extreme_return_counts.csv")
+
+    print("\nSTEP 6: TARGET DIAGNOSTICS")
+    print("Largest target values:")
+    print(largest.to_string(index=False))
+    print("\nSmallest target values:")
+    print(smallest.to_string(index=False))
+    print("\nExtreme target counts:")
+    print(counts.to_string(index=False))
+
+    plt.figure(figsize=(8, 5))
+    plt.hist(y, bins=100)
+    plt.title("Target Distribution")
+    plt.xlabel("Next-month excess return")
+    plt.ylabel("Frequency")
+    save_plot("target_distribution.png")
+
+    trimmed = y[(y >= y.quantile(0.01)) & (y <= y.quantile(0.99))]
+
+    plt.figure(figsize=(8, 5))
+    plt.hist(trimmed, bins=100)
+    plt.title("Target Distribution Trimmed to 1st-99th Percentiles")
+    plt.xlabel("Next-month excess return")
+    plt.ylabel("Frequency")
+    save_plot("target_distribution_trimmed.png")
 
 
-def create_selected_variable_examples(full, predictors):
-    """Save detailed examples for important variables."""
-    selected = [
-        TARGET,
-        "mom1m",
+def create_selected_variable_plots(full, predictors):
+    """Plot a few common variables if they exist."""
+    selected_candidates = [
         "mom12m",
+        "mom6m",
+        "retvol_12m",
         "beta_12m",
         "idiovol_12m",
         "amihud_1m",
         "bm_comp",
-        "gp_at",
+        "op_at",
         "debt_at",
-        "asset_growth",
-        "wg_dp",
-        "wg_ep",
-        "wg_bm",
-        "wg_tbl",
-        "wg_tms",
-        "wg_dfy",
-        "wg_svar",
     ]
 
-    selected = [name for name in selected if name in full.columns]
+    existing = [col for col in selected_candidates if col in predictors]
 
-    rows = []
+    examples = []
 
-    for name in selected:
-        values = full[name]
+    for col in existing:
+        examples.append(
+            {
+                "predictor": col,
+                "min": full[col].min(),
+                "p01": full[col].quantile(0.01),
+                "p50": full[col].quantile(0.50),
+                "p99": full[col].quantile(0.99),
+                "max": full[col].max(),
+                "share_negative": (full[col] < 0).mean(),
+                "share_positive": (full[col] > 0).mean(),
+            }
+        )
 
-        rows.append({
-            "variable": name,
-            "is_target": name == TARGET,
-            "is_predictor": name in predictors,
-            "mean": values.mean(),
-            "std": values.std(),
-            "min": values.min(),
-            "p01": values.quantile(0.01),
-            "p05": values.quantile(0.05),
-            "p50": values.quantile(0.50),
-            "p95": values.quantile(0.95),
-            "p99": values.quantile(0.99),
-            "max": values.max(),
-            "interpretation": variable_interpretation(name),
-        })
+        plt.figure(figsize=(8, 5))
+        plt.hist(full[col], bins=100)
+        plt.title(f"Ranked Distribution: {col}")
+        plt.xlabel(f"{col} ranked value")
+        plt.ylabel("Frequency")
+        save_plot(f"{col}_rank_distribution.png")
 
-    examples = pd.DataFrame(rows)
-    examples.to_csv(REPORT_OUTPUT_DIR / "selected_variable_examples.csv", index=False)
-
-    return examples
-
-
-def variable_interpretation(name):
-    """Short explanation of selected variables."""
-    explanations = {
-        TARGET: (
-            "Raw next-month stock excess return. Negative values mean the stock "
-            "underperformed the risk-free rate next month."
-        ),
-        "mom1m": (
-            "Rank-normalized current-month return. Negative means relatively low "
-            "return compared with other stocks in the same month."
-        ),
-        "mom12m": (
-            "Rank-normalized past 12-month momentum excluding the current month."
-        ),
-        "beta_12m": "Rank-normalized rolling market beta.",
-        "idiovol_12m": (
-            "Rank-normalized residual volatility from a rolling market regression."
-        ),
-        "amihud_1m": "Rank-normalized Amihud illiquidity measure.",
-        "bm_comp": "Rank-normalized book-to-market ratio.",
-        "gp_at": "Rank-normalized gross profitability scaled by assets.",
-        "debt_at": "Rank-normalized total debt scaled by assets.",
-        "asset_growth": "Rank-normalized asset growth.",
-        "wg_dp": "Lagged Welch-Goyal dividend-price ratio macro variable.",
-        "wg_ep": "Lagged Welch-Goyal earnings-price ratio macro variable.",
-        "wg_bm": "Lagged Welch-Goyal aggregate book-to-market macro variable.",
-        "wg_tbl": "Lagged Treasury bill rate macro variable.",
-        "wg_tms": "Lagged term spread macro variable.",
-        "wg_dfy": "Lagged default spread macro variable.",
-        "wg_svar": "Lagged stock variance macro variable.",
-    }
-
-    return explanations.get(name, "Rank-normalized predictor or macro variable.")
+    if examples:
+        save_table(pd.DataFrame(examples), "selected_variable_examples.csv")
 
 
 # ---------------------------------------------------------------------
-# 5) Plots
-# ---------------------------------------------------------------------
-def plot_stock_count_by_month(monthly):
-    """Plot number of stocks per month."""
-    plt.figure(figsize=(10, 5))
-    plt.plot(monthly["month"], monthly["tickers"])
-    plt.title("Number of stocks per month")
-    plt.xlabel("Month")
-    plt.ylabel("Number of tickers")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / "stock_count_by_month.png", dpi=300)
-    plt.close()
-
-
-def plot_target_distribution(full):
-    """Plot distribution of the target."""
-    plt.figure(figsize=(8, 5))
-    plt.hist(full[TARGET], bins=100)
-    plt.title("Distribution of next-month excess returns")
-    plt.xlabel("Next-month excess return")
-    plt.ylabel("Frequency")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / "target_distribution.png", dpi=300)
-    plt.close()
-
-
-def plot_target_distribution_trimmed(full):
-    """Plot target distribution after trimming only the graph range.
-
-    This graph does not change the data. It only zooms in on the central part
-    of the distribution to make the histogram readable.
-    """
-    lower = full[TARGET].quantile(0.01)
-    upper = full[TARGET].quantile(0.99)
-
-    trimmed = full[(full[TARGET] >= lower) & (full[TARGET] <= upper)]
-
-    plt.figure(figsize=(8, 5))
-    plt.hist(trimmed[TARGET], bins=100)
-    plt.title("Distribution of next-month excess returns, 1st-99th percentile")
-    plt.xlabel("Next-month excess return")
-    plt.ylabel("Frequency")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / "target_distribution_trimmed.png", dpi=300)
-    plt.close()
-
-
-def plot_target_mean_by_month(monthly):
-    """Plot average target return by month."""
-    plt.figure(figsize=(10, 5))
-    plt.plot(monthly["month"], monthly["target_mean"])
-    plt.title("Average next-month excess return by month")
-    plt.xlabel("Month")
-    plt.ylabel("Average next-month excess return")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / "target_mean_by_month.png", dpi=300)
-    plt.close()
-
-
-def plot_target_volatility_by_month(monthly):
-    """Plot cross-sectional target volatility by month."""
-    plt.figure(figsize=(10, 5))
-    plt.plot(monthly["month"], monthly["target_std"])
-    plt.title("Cross-sectional volatility of next-month excess returns")
-    plt.xlabel("Month")
-    plt.ylabel("Cross-sectional standard deviation")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / "target_volatility_by_month.png", dpi=300)
-    plt.close()
-
-
-def plot_example_predictor_distribution(full, variable):
-    """Plot one example predictor distribution."""
-    if variable not in full.columns:
-        return
-
-    plt.figure(figsize=(8, 5))
-    plt.hist(full[variable], bins=50)
-    plt.title(f"Distribution of rank-normalized {variable}")
-    plt.xlabel(f"{variable} after rank-normalization")
-    plt.ylabel("Frequency")
-    plt.tight_layout()
-    plt.savefig(REPORT_OUTPUT_DIR / f"{variable}_rank_distribution.png", dpi=300)
-    plt.close()
-
-
-def plot_macro_variables(full):
-    """Plot the clean Welch-Goyal macro variables over time."""
-    macro_variables = [
-        "wg_dp",
-        "wg_ep",
-        "wg_bm",
-        "wg_ntis",
-        "wg_tbl",
-        "wg_tms",
-        "wg_dfy",
-        "wg_svar",
-    ]
-
-    macro_variables = [name for name in macro_variables if name in full.columns]
-
-    macro = (
-        full[["month"] + macro_variables]
-        .drop_duplicates("month")
-        .sort_values("month")
-    )
-
-    for variable in macro_variables:
-        plt.figure(figsize=(10, 5))
-        plt.plot(macro["month"], macro[variable])
-        plt.title(f"Welch-Goyal macro variable: {variable}")
-        plt.xlabel("Month")
-        plt.ylabel(variable)
-        plt.tight_layout()
-        plt.savefig(REPORT_OUTPUT_DIR / f"{variable}_time_series.png", dpi=300)
-        plt.close()
-
-
-# ---------------------------------------------------------------------
-# 6) Main inspection pipeline
+# 3) Main
 # ---------------------------------------------------------------------
 def main():
-    full, train, validation, test, predictors = load_data()
-
-    summary = create_sample_summary(full, train, validation, test, predictors)
-    monthly = create_monthly_panel_summary(full)
-
-    ranges = create_predictor_range_check(full, predictors)
-    predictor_summary = create_predictor_distribution_summary(full, predictors)
-    negative_summary = create_negative_value_explanation(full, predictors)
-    examples = create_selected_variable_examples(full, predictors)
-    largest_targets, smallest_targets = create_target_outlier_report(full)
-    extreme_counts = create_target_extreme_count(full)
-
-    plot_stock_count_by_month(monthly)
-    plot_target_distribution(full)
-    plot_target_distribution_trimmed(full)
-    plot_target_mean_by_month(monthly)
-    plot_target_volatility_by_month(monthly)
-
-    plot_example_predictor_distribution(full, "mom12m")
-    plot_example_predictor_distribution(full, "bm_comp")
-    plot_example_predictor_distribution(full, "beta_12m")
-
-    plot_macro_variables(full)
-
-    outside_range = int(
-        ranges["below_minus_one"].sum() + ranges["above_plus_one"].sum()
-    )
-
     print("=" * 80)
     print("06_inspect_final_dataset.py")
     print("=" * 80)
 
-    print("\nSTEP 1: Basic final dataset summary")
-    print(summary.to_string(index=False))
+    ensure_report_dir()
 
-    print("\nSTEP 2: Panel coverage")
-    print(f"First month: {full['month'].min()}")
-    print(f"Last month:  {full['month'].max()}")
-    print(f"Average tickers per month: {monthly['tickers'].mean():.1f}")
-    print(f"Minimum tickers in a month: {monthly['tickers'].min()}")
-    print(f"Maximum tickers in a month: {monthly['tickers'].max()}")
+    full, train, validation, test, predictors = load_data()
 
-    print("\nSTEP 3: Missing values and duplicates")
-    print(f"Missing values in full dataset: {int(full.isna().sum().sum())}")
-    print(f"Missing targets in full dataset: {int(full[TARGET].isna().sum())}")
-    print(
-        "Duplicate ticker-month rows: "
-        f"{int(full.duplicated(['ticker', 'month']).sum())}"
-    )
+    create_dataset_summary(full, train, validation, test, predictors)
+    create_split_target_summary(train, validation, test, full)
+    create_monthly_panel_summary(full)
+    check_predictor_ranges(full, predictors)
+    create_predictor_distribution_summary(full, predictors)
+    create_target_diagnostics(full)
+    create_selected_variable_plots(full, predictors)
 
-    print("\nSTEP 4: Target behavior")
-    print(f"Target mean: {full[TARGET].mean():.6f}")
-    print(f"Target standard deviation: {full[TARGET].std():.6f}")
-    print(f"Target 1st percentile: {full[TARGET].quantile(0.01):.6f}")
-    print(f"Target median: {full[TARGET].median():.6f}")
-    print(f"Target 99th percentile: {full[TARGET].quantile(0.99):.6f}")
-    print(f"Target maximum: {full[TARGET].max():.6f}")
-    print(f"Target minimum: {full[TARGET].min():.6f}")
-
-    print("\nSTEP 4B: Target outlier inspection")
-    print("Largest next-month excess returns:")
-    print(largest_targets.head(10).to_string(index=False))
-    print()
-    print("Smallest next-month excess returns:")
-    print(smallest_targets.head(10).to_string(index=False))
-
-    print("\nSTEP 4C: Count of extreme target returns")
-    print(extreme_counts.to_string(index=False))
-
-    print("\nSTEP 5: Predictor rank-normalization check")
-    print(f"Number of predictors: {len(predictors)}")
-    print(f"Predictors outside [-1, 1]: {outside_range}")
-    print(
-        "Negative predictor values are expected. They mean the stock is below "
-        "the cross-sectional middle for that predictor in that month."
-    )
-
-    print("\nSTEP 6: Example variables")
-    display_columns = [
-        "variable",
-        "is_target",
-        "is_predictor",
-        "mean",
-        "std",
-        "min",
-        "p50",
-        "max",
-    ]
-    print(examples[display_columns].to_string(index=False))
-
-    print("\nSTEP 7: Saved diagnostic files")
+    print("\n" + "=" * 80)
+    print("Inspection complete.")
     print(f"Reports saved in: {REPORT_OUTPUT_DIR}")
-
-    print("\nCreated main tables:")
-    print("- final_dataset_summary.csv")
-    print("- monthly_panel_summary.csv")
-    print("- predictor_rank_range_check.csv")
-    print("- predictor_distribution_summary.csv")
-    print("- predictor_negative_value_summary.csv")
-    print("- selected_variable_examples.csv")
-    print("- largest_target_returns.csv")
-    print("- smallest_target_returns.csv")
-    print("- target_extreme_return_counts.csv")
-
-    print("\nCreated main graphs:")
-    print("- stock_count_by_month.png")
-    print("- target_distribution.png")
-    print("- target_distribution_trimmed.png")
-    print("- target_mean_by_month.png")
-    print("- target_volatility_by_month.png")
-    print("- mom12m_rank_distribution.png")
-    print("- bm_comp_rank_distribution.png")
-    print("- beta_12m_rank_distribution.png")
-    print("- wg_*_time_series.png")
     print("=" * 80)
 
 
