@@ -151,24 +151,6 @@ def winsorize_target_using_train(train, validation, test):
     return train, validation, test, cutoffs
 
 
-def rank_to_minus_one_plus_one(values):
-    """Transform cross-sectional ranks in one month to [-1, 1].
-
-    Formula:
-        rank_scaled = 2 * (rank - 1) / (N - 1) - 1
-
-    The smallest value becomes -1, the largest value becomes +1,
-    and the middle observations are placed between them.
-    """
-    ranks = values.rank(method="average", na_option="keep")
-    count = ranks.notna().sum()
-
-    if count <= 1:
-        return pd.Series(0.0, index=values.index)
-
-    return 2.0 * (ranks - 1.0) / (count - 1.0) - 1.0
-
-
 def impute_and_rank_by_month(data, predictors):
     """Impute predictors by monthly median and rank-normalize by month.
 
@@ -185,21 +167,18 @@ def impute_and_rank_by_month(data, predictors):
     data[predictors] = data[predictors].astype("float32")
 
     median_rows = []
+    for month, index in data.groupby("month", sort=False).groups.items():
+        values = data.loc[index, predictors]
+        medians = values.median()
+        values = values.fillna(medians).fillna(0.0)
 
-    for month, index in data.groupby("month").groups.items():
-        monthly_values = data.loc[index, predictors].copy()
+        ranks = values.rank(method="average")
+        if len(values) > 1:
+            values = 2.0 * (ranks - 1.0) / (len(values) - 1.0) - 1.0
+        else:
+            values.loc[:, :] = 0.0
 
-        medians = monthly_values.median()
-        monthly_values = monthly_values.fillna(medians)
-
-        # If a predictor is missing for the full month, use 0 before ranking.
-        monthly_values = monthly_values.fillna(0.0)
-
-        for predictor in predictors:
-            data.loc[index, predictor] = (
-                rank_to_minus_one_plus_one(monthly_values[predictor])
-                .astype("float32")
-            )
+        data.loc[index, predictors] = values.astype("float32")
 
         median_rows.append({
             "month": month,

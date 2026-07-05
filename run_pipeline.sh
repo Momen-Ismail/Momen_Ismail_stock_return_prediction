@@ -1,6 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
+cd "$(dirname "$0")"
 
 echo "01 - Build and clean Yahoo daily data"
 python src/data/01_build_clean_yahoo_daily.py
@@ -8,7 +9,7 @@ python src/data/01_build_clean_yahoo_daily.py
 echo "02 - Build monthly stock features"
 python src/data/02_build_monthly_stock_features.py
 
-echo "03 - Add fundamentals and macro variables"
+echo "03 - Add lagged Compustat fundamentals"
 python src/data/03_add_fundamentals_and_macro.py
 
 echo "04 - Build raw Kelly-style dataset"

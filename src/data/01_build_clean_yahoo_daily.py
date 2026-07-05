@@ -16,7 +16,6 @@ import time
 
 import pandas as pd
 import requests
-import urllib3
 import yfinance as yf
 
 
@@ -80,12 +79,9 @@ def find_column(table, words):
 
 def build_sp500_universe():
     """Combine current and historical Wikipedia S&P 500 tickers."""
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     response = requests.get(
         WIKI_URL,
         headers={"User-Agent": "Mozilla/5.0"},
-        verify=False,
         timeout=30,
     )
     response.raise_for_status()
@@ -144,21 +140,6 @@ def yahoo_download(ticker, start, end):
         data.columns = data.columns.get_level_values(0)
 
     return data
-
-
-def yahoo_has_data(ticker):
-    """Check whether Yahoo has usable data for a ticker."""
-    try:
-        data = yahoo_download(
-            ticker,
-            start=f"{START_YEAR}-01-01",
-            end=f"{END_YEAR}-12-31",
-        )
-
-        return not data.empty
-
-    except Exception:
-        return False
 
 
 def download_daily_prices(tickers):
@@ -307,21 +288,9 @@ def apply_quality_filter(daily, report):
 def main():
     universe = build_sp500_universe()
     print(f"Wikipedia universe: {len(universe)} tickers")
+    pd.DataFrame({"ticker": universe}).to_csv(TICKERS_RAW_FILE, index=False)
 
-    available = []
-
-    for number, ticker in enumerate(universe, start=1):
-        print(f"Checking {number}/{len(universe)}: {ticker}")
-
-        if yahoo_has_data(ticker):
-            available.append(ticker)
-
-        time.sleep(SLEEP_SECONDS)
-
-    available = sorted(available)
-    pd.DataFrame({"ticker": available}).to_csv(TICKERS_RAW_FILE, index=False)
-
-    daily = download_daily_prices(available)
+    daily = download_daily_prices(universe)
     daily.to_csv(DAILY_RAW_FILE, index=False)
 
     report = create_quality_report(daily)

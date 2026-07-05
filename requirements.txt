@@ -1,10 +1,5 @@
 pandas
 numpy
-scikit-learn
 requests
-urllib3
-certifi
 yfinance
 pyarrow
-openpyxl
-matplotlib

@@ -1,27 +1,21 @@
-"""Merge lagged Compustat fundamentals and FRED macro variables.
+"""Add lagged Compustat fundamentals to the monthly stock panel.
 
 Input:
 - monthly stock panel from file 02
 - raw Compustat annual fundamentals
 
 Output:
-- monthly panel with lagged accounting variables and lagged macro variables
+- monthly panel with lagged accounting variables
 
 Important timing rule:
 Compustat variables are merged only after a six-month reporting lag.
-Macro variables are lagged by one month before merging.
 """
 
-from io import StringIO
 from pathlib import Path
-import ssl
 import sys
-import urllib.request
 
-import certifi
 import numpy as np
 import pandas as pd
-import requests
 
 
 # Allow direct execution from the project root:
@@ -34,7 +28,6 @@ from src.config import (  # noqa: E402
     MONTHLY_STOCK_FILE,
     COMPUSTAT_RAW_FILE,
     COMPUSTAT_CLEAN_FILE,
-    MACRO_FILE,
     PANEL_WITH_FUNDAMENTALS_FILE,
 )
 
@@ -439,134 +432,7 @@ def merge_compustat(monthly, comp):
 
 
 # ---------------------------------------------------------------------
-# 4) Download and lag FRED macro variables
-# ---------------------------------------------------------------------
-def download_fred(series_id):
-    """Download one FRED series as a monthly time series."""
-    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-
-    try:
-        text = requests.get(url, timeout=30, verify=certifi.where()).text
-
-    except Exception:
-        with urllib.request.urlopen(
-            url,
-            context=ssl._create_unverified_context(),
-            timeout=30,
-        ) as response:
-            text = response.read().decode()
-
-    data = pd.read_csv(StringIO(text))
-    data = data.rename(
-        columns={
-            "observation_date": "date",
-            series_id: "value",
-        }
-    )
-
-    data["date"] = pd.to_datetime(data["date"])
-    data["value"] = pd.to_numeric(data["value"], errors="coerce")
-    data["month"] = data["date"] + pd.offsets.MonthEnd(0)
-
-    return data[["month", "value"]].drop_duplicates("month", keep="last")
-
-
-def build_macro_dataset():
-    """Download FRED variables and construct lagged macro predictors."""
-    fred_series = {
-        "UNRATE": "unemployment_rate",
-        "CPIAUCSL": "cpi",
-        "INDPRO": "industrial_production",
-        "FEDFUNDS": "fed_funds_rate",
-        "TB3MS": "tbill_3m_rate",
-        "GS10": "treasury_10y_rate",
-        "AAA": "aaa_corporate_yield",
-        "BAA": "baa_corporate_yield",
-    }
-
-    macro = None
-
-    for series_id, name in fred_series.items():
-        data = download_fred(series_id).rename(columns={"value": name})
-        macro = data if macro is None else macro.merge(data, on="month", how="outer")
-
-    macro = macro.sort_values("month").ffill()
-
-    rate_columns = [
-        "fed_funds_rate",
-        "tbill_3m_rate",
-        "treasury_10y_rate",
-        "aaa_corporate_yield",
-        "baa_corporate_yield",
-    ]
-
-    for name in rate_columns:
-        macro[f"{name}_dec"] = macro[name] / 100.0
-
-    macro["inflation_12m"] = macro["cpi"].pct_change(12)
-    macro["inflation_1m"] = macro["cpi"].pct_change()
-
-    macro["industrial_production_growth_12m"] = (
-        macro["industrial_production"].pct_change(12)
-    )
-    macro["industrial_production_growth_1m"] = (
-        macro["industrial_production"].pct_change()
-    )
-
-    macro["unemployment_rate_dec"] = macro["unemployment_rate"] / 100.0
-    macro["unemployment_change_12m"] = macro["unemployment_rate_dec"].diff(12)
-    macro["unemployment_change_1m"] = macro["unemployment_rate_dec"].diff()
-
-    macro["term_spread"] = (
-        macro["treasury_10y_rate_dec"] - macro["tbill_3m_rate_dec"]
-    )
-    macro["default_spread"] = (
-        macro["baa_corporate_yield_dec"] - macro["aaa_corporate_yield_dec"]
-    )
-
-    macro["fedfunds_change_1m"] = macro["fed_funds_rate_dec"].diff()
-    macro["fedfunds_change_12m"] = macro["fed_funds_rate_dec"].diff(12)
-
-    macro_variables = [
-        "unemployment_rate_dec",
-        "inflation_12m",
-        "inflation_1m",
-        "industrial_production_growth_12m",
-        "industrial_production_growth_1m",
-        "fed_funds_rate_dec",
-        "tbill_3m_rate_dec",
-        "treasury_10y_rate_dec",
-        "aaa_corporate_yield_dec",
-        "baa_corporate_yield_dec",
-        "term_spread",
-        "default_spread",
-        "unemployment_change_12m",
-        "unemployment_change_1m",
-        "fedfunds_change_1m",
-        "fedfunds_change_12m",
-    ]
-
-    lagged_variables = []
-
-    for name in macro_variables:
-        lagged_name = f"macro_{name}_lag1"
-        macro[lagged_name] = macro[name].shift(1)
-        lagged_variables.append(lagged_name)
-
-    macro.to_csv(MACRO_FILE, index=False)
-
-    return macro[["month"] + lagged_variables]
-
-
-def add_macro(panel):
-    """Merge lagged macro predictors to the panel."""
-    macro = build_macro_dataset()
-
-    return panel.merge(macro, on="month", how="left")
-
-
-# ---------------------------------------------------------------------
-# 5) Run pipeline
+# 4) Run pipeline
 # ---------------------------------------------------------------------
 def main():
     monthly = pd.read_csv(MONTHLY_STOCK_FILE, low_memory=False)
@@ -574,7 +440,6 @@ def main():
 
     comp = clean_compustat()
     panel = merge_compustat(monthly, comp)
-    panel = add_macro(panel)
 
     panel = panel.sort_values(["ticker", "month"]).reset_index(drop=True)
     panel.to_csv(PANEL_WITH_FUNDAMENTALS_FILE, index=False)
@@ -586,4 +451,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
