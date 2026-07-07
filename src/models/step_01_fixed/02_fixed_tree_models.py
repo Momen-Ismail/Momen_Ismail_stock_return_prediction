@@ -1,10 +1,11 @@
-"""Estimate fixed Random Forest and GBRT benchmarks before tuning."""
+"""Estimate fixed decision-tree, Random Forest, and GBRT benchmarks."""
 
 from pathlib import Path
 import sys
 
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.tree import DecisionTreeRegressor
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
@@ -23,11 +24,17 @@ RANDOM_STATE = 42
 def fixed_models():
     """Use the baseline parameters documented in the helper repository."""
     return {
+        "decision_tree_fixed": DecisionTreeRegressor(
+            max_depth=3,
+            min_samples_leaf=20,
+            random_state=RANDOM_STATE,
+        ),
         "rf_fixed": RandomForestRegressor(
             n_estimators=100,
             max_depth=3,
             max_features="sqrt",
             n_jobs=-1,
+            oob_score=True,
             random_state=RANDOM_STATE,
         ),
         "gbrt_fixed": GradientBoostingRegressor(
@@ -55,6 +62,8 @@ def main():
         model_metrics, model_predictions = evaluate_model(
             name, samples, predictions, TARGET
         )
+        if hasattr(model, "oob_score_"):
+            model_metrics["oob_r2_train"] = model.oob_score_
         metrics.append(model_metrics)
         prediction_frames.append(model_predictions)
         importances.append(

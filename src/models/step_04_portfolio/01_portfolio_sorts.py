@@ -10,7 +10,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR, TARGET  # noqa: E402
 from src.models.utils.portfolio import (  # noqa: E402
-    evaluate_portfolio, rank_portfolios,
+    block_bootstrap_mean, evaluate_portfolio, rank_portfolios,
 )
 
 FIXED_DIR = MODEL_OUTPUT_DIR / "fixed"
@@ -65,10 +65,29 @@ def main():
     summary = pd.DataFrame(summaries)
     monthly = pd.concat(monthly_frames, ignore_index=True)
     ranking = rank_portfolios(summary, "test")
+    validation_ranking = rank_portfolios(summary, "validation")
+
+    bootstrap_rows = []
+    if not validation_ranking.empty:
+        selected = validation_ranking.iloc[0]
+        selected_returns = monthly[
+            monthly["stage"].eq(selected["stage"])
+            & monthly["model"].eq(selected["model"])
+        ]
+        for sample, returns in selected_returns.groupby("sample"):
+            bootstrap_rows.append({
+                "stage": selected["stage"],
+                "model": selected["model"],
+                "sample": sample,
+                **block_bootstrap_mean(returns["long_short"]),
+            })
 
     summary.to_csv(OUTPUT_DIR / "portfolio_summary.csv", index=False)
     monthly.to_csv(OUTPUT_DIR / "portfolio_monthly_returns.csv", index=False)
     ranking.to_csv(OUTPUT_DIR / "portfolio_test_ranking.csv", index=False)
+    pd.DataFrame(bootstrap_rows).to_csv(
+        OUTPUT_DIR / "selected_portfolio_block_bootstrap.csv", index=False
+    )
     print(ranking[[
         "rank_by_long_short_sharpe", "stage", "model",
         "long_short_mean_annual", "long_short_sharpe", "long_short_t_stat",

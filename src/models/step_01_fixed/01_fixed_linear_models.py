@@ -7,8 +7,9 @@ import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
 from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
@@ -32,23 +33,42 @@ def fixed_models(all_predictors, ols3):
     """Define the untuned models and the predictors used by each."""
     return {
         "historical_mean": (None, []),
-        "ols_plus_h": (LinearRegression(), all_predictors),
-        "ols_3_plus_h": (LinearRegression(), ols3),
+        "ols_plus_h": (
+            make_pipeline(StandardScaler(), LinearRegression()), all_predictors
+        ),
+        "ols_3_plus_h": (
+            make_pipeline(StandardScaler(), LinearRegression()), ols3
+        ),
         "pcr_20": (
-            make_pipeline(PCA(20, random_state=RANDOM_STATE), LinearRegression()),
+            make_pipeline(
+                StandardScaler(),
+                PCA(20, random_state=RANDOM_STATE),
+                LinearRegression(),
+            ),
             all_predictors,
         ),
-        "pls_20": (PLSRegression(20), all_predictors),
+        "pls_20": (
+            make_pipeline(StandardScaler(), PLSRegression(20)), all_predictors
+        ),
+        "ridge_plus_h": (
+            make_pipeline(StandardScaler(), Ridge(alpha=1.0)), all_predictors
+        ),
         "lasso_plus_h": (
-            Lasso(alpha=1e-5, max_iter=20_000, random_state=RANDOM_STATE),
+            make_pipeline(
+                StandardScaler(),
+                Lasso(alpha=1e-5, max_iter=20_000, random_state=RANDOM_STATE),
+            ),
             all_predictors,
         ),
         "enet_plus_h": (
-            ElasticNet(
-                alpha=1e-5,
-                l1_ratio=0.5,
-                max_iter=20_000,
-                random_state=RANDOM_STATE,
+            make_pipeline(
+                StandardScaler(),
+                ElasticNet(
+                    alpha=1e-5,
+                    l1_ratio=0.5,
+                    max_iter=20_000,
+                    random_state=RANDOM_STATE,
+                ),
             ),
             all_predictors,
         ),
@@ -77,8 +97,9 @@ def main():
                 for sample, (X, _) in model_arrays.items()
             }
 
-            if hasattr(model, "coef_"):
-                values = np.asarray(model.coef_).reshape(-1)
+            estimator = model[-1] if hasattr(model, "steps") else model
+            if hasattr(estimator, "coef_"):
+                values = np.asarray(estimator.coef_).reshape(-1)
                 if len(values) == len(predictors):
                     coefficients.append(
                         ranked_effects(name, predictors, values, "coefficient")

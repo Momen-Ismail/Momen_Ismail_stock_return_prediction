@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.tree import DecisionTreeRegressor
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
@@ -19,13 +20,23 @@ RANDOM_STATE = 42
 
 def optimized_models(parameters):
     """Construct tree models from validation-selected parameters."""
+    tree = parameters["decision_tree"]
     rf, gbrt = parameters["random_forest"], parameters["gbrt"]
     return {
+        "decision_tree_optimized": DecisionTreeRegressor(
+            max_depth=(
+                None if tree["max_depth"] is None else int(tree["max_depth"])
+            ),
+            min_samples_leaf=int(tree["min_samples_leaf"]),
+            ccp_alpha=float(tree["ccp_alpha"]),
+            random_state=RANDOM_STATE,
+        ),
         "rf_optimized": RandomForestRegressor(
             n_estimators=int(rf["n_estimators"]),
             max_depth=int(rf["max_depth"]),
             max_features=rf["max_features"],
             n_jobs=-1,
+            oob_score=True,
             random_state=RANDOM_STATE,
         ),
         "gbrt_optimized": GradientBoostingRegressor(
@@ -40,7 +51,7 @@ def optimized_models(parameters):
 def main():
     samples, predictors = load_model_data()
     parameters = load_best_parameters(
-        TUNING_FILE, ["random_forest", "gbrt"]
+        TUNING_FILE, ["decision_tree", "random_forest", "gbrt"]
     )
     metrics, predictions, importances = fit_models(
         optimized_models(parameters),

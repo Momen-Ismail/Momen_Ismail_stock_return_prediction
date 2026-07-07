@@ -18,6 +18,8 @@ FINAL_COLUMNS = [
     "valid_portfolio", "months", "observations", "prediction_std",
     "long_mean_annual", "short_mean_annual", "long_short_mean_annual",
     "long_short_vol_annual", "long_short_sharpe", "long_short_t_stat",
+    "long_short_hac_standard_error", "long_short_hac_t_stat",
+    "long_short_hac_p_value",
     "long_short_positive_month_share",
 ]
 

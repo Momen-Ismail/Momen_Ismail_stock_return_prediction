@@ -9,9 +9,10 @@ def evaluate_predictions(y_true, y_pred, benchmark):
     """Return predictive metrics relative to the training-mean benchmark."""
     mse = mean_squared_error(y_true, y_pred)
     benchmark_mse = mean_squared_error(y_true, benchmark)
+    y_std, prediction_std = np.std(y_true), np.std(y_pred)
     correlation = (
         np.corrcoef(y_true, y_pred)[0, 1]
-        if np.std(y_true) > 1e-12 and np.std(y_pred) > 1e-12 else np.nan
+        if y_std > 1e-8 and prediction_std > 1e-8 else np.nan
     )
     return {
         "rmse": np.sqrt(mse),
@@ -23,7 +24,7 @@ def evaluate_predictions(y_true, y_pred, benchmark):
         ),
         "prediction_target_correlation": correlation,
         "prediction_mean": np.mean(y_pred),
-        "prediction_std": np.std(y_pred),
+        "prediction_std": prediction_std,
         "prediction_min": np.min(y_pred),
         "prediction_max": np.max(y_pred),
     }

@@ -42,6 +42,26 @@ def arrays(samples, predictors, target=TARGET):
     }
 
 
+def expanding_month_folds(data, n_splits=3, min_train_fraction=0.50):
+    """Create expanding folds without splitting a calendar month across samples."""
+    months = np.array(sorted(data["month"].unique()))
+    first_validation = int(len(months) * min_train_fraction)
+    validation_blocks = np.array_split(months[first_validation:], n_splits)
+    folds = []
+
+    for block in validation_blocks:
+        train_mask = data["month"] < block[0]
+        validation_mask = data["month"].isin(block)
+        folds.append({
+            "train_index": data.index[train_mask],
+            "validation_index": data.index[validation_mask],
+            "train_end": pd.Timestamp(block[0]) - pd.offsets.MonthEnd(1),
+            "validation_start": pd.Timestamp(block[0]),
+            "validation_end": pd.Timestamp(block[-1]),
+        })
+    return folds
+
+
 def ols3_predictors(predictors):
     """Select size, book-to-market, momentum, and their macro interactions."""
     candidates = [

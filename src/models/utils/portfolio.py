@@ -2,6 +2,9 @@
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
+
+HAC_LAGS = 6
 
 
 def assign_portfolios(data, groups=10):
@@ -22,6 +25,9 @@ def portfolio_statistics(monthly):
         mean, volatility, count = returns.mean(), returns.std(), returns.count()
         annual_return = 12.0 * mean
         annual_volatility = np.sqrt(12.0) * volatility
+        hac = sm.OLS(
+            returns.to_numpy(), np.ones((count, 1))
+        ).fit(cov_type="HAC", cov_kwds={"maxlags": min(HAC_LAGS, count - 1)})
         statistics.update({
             f"{name}_mean_monthly": mean,
             f"{name}_mean_annual": annual_return,
@@ -33,6 +39,9 @@ def portfolio_statistics(monthly):
                 mean / (volatility / np.sqrt(count))
                 if volatility > 0 and count > 1 else np.nan
             ),
+            f"{name}_hac_standard_error": hac.bse[0],
+            f"{name}_hac_t_stat": hac.tvalues[0],
+            f"{name}_hac_p_value": hac.pvalues[0],
             f"{name}_positive_month_share": (returns > 0).mean(),
         })
     return statistics
@@ -93,3 +102,35 @@ def rank_portfolios(summary, sample):
     )
     ranking.insert(0, "rank_by_long_short_sharpe", ranking.index + 1)
     return ranking
+
+
+def block_bootstrap_mean(returns, replications=5_000, seed=42):
+    """Moving-block bootstrap inference for a monthly mean return."""
+    values = pd.Series(returns).dropna().to_numpy(dtype=float)
+    observations = len(values)
+    block_length = int(np.ceil(observations ** (1.0 / 3.0)))
+    blocks_per_sample = int(np.ceil(observations / block_length))
+    rng = np.random.default_rng(seed)
+    means = np.empty(replications)
+
+    for draw in range(replications):
+        starts = rng.integers(
+            0, observations - block_length + 1, size=blocks_per_sample
+        )
+        index = np.concatenate([
+            np.arange(start, start + block_length) for start in starts
+        ])[:observations]
+        means[draw] = values[index].mean()
+
+    standard_error = means.std(ddof=1)
+    return {
+        "observations": observations,
+        "replications": replications,
+        "block_length": block_length,
+        "mean_monthly": values.mean(),
+        "mean_annual": 12.0 * values.mean(),
+        "bootstrap_standard_error": standard_error,
+        "bootstrap_t_stat": values.mean() / standard_error,
+        "ci_95_monthly_low": np.quantile(means, 0.025),
+        "ci_95_monthly_high": np.quantile(means, 0.975),
+    }

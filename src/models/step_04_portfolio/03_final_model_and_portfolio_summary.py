@@ -64,6 +64,7 @@ def main():
     columns = [
         "rank_by_prediction_oos_r2", "rank_by_long_short_sharpe",
         "stage", "model", "oos_r2_vs_train_mean", "long_short_sharpe",
+        "long_short_hac_t_stat",
     ]
     print("Validation results (use for selection):\n", validation[columns])
     print("Test results (final evaluation only):\n", test[columns])
