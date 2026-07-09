@@ -60,6 +60,7 @@ VALIDATION_END = pd.Timestamp("2019-12-31")
 MAX_MISSING_SHARE = 0.40
 LOWER_Q = 0.01
 UPPER_Q = 0.99
+DAILY_BAD_ROW_SHARE_THRESHOLD = 0.10
 
 
 # ------------------------------------------------------------

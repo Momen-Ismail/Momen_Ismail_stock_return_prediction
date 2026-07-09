@@ -9,7 +9,6 @@ Output:
 - removed ticker report
 """
 
-from io import StringIO
 from pathlib import Path
 import sys
 import time
@@ -31,6 +30,7 @@ from src.config import (  # noqa: E402
     PRICE_END,
     SLEEP_SECONDS,
     WIKI_URL,
+    DAILY_BAD_ROW_SHARE_THRESHOLD,
     TICKERS_RAW_FILE,
     DAILY_RAW_FILE,
     QUALITY_REPORT_FILE,
@@ -56,14 +56,16 @@ def clean_ticker(value):
     return ticker
 
 
-def flatten_columns(table):
-    """Flatten Wikipedia tables with multi-level column names."""
-    table.columns = [
-        " ".join(str(item) for item in column if str(item) != "nan").strip()
-        if isinstance(column, tuple)
-        else str(column).strip()
-        for column in table.columns
-    ]
+def normalize_columns(table):
+    """Return a copy with simple string column names."""
+    table = table.copy()
+    if isinstance(table.columns, pd.MultiIndex):
+        table.columns = [
+            " ".join(str(item) for item in column if str(item) != "nan").strip()
+            for column in table.columns
+        ]
+    else:
+        table.columns = [str(column).strip() for column in table.columns]
 
     return table
 
@@ -79,17 +81,19 @@ def find_column(table, words):
 
 def build_sp500_universe():
     """Combine current and historical Wikipedia S&P 500 tickers."""
-    response = requests.get(
-        WIKI_URL,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=30,
-    )
-    response.raise_for_status()
-
-    current, changes = map(
-        flatten_columns,
-        pd.read_html(StringIO(response.text))[:2],
-    )
+    try:
+        current, changes = map(normalize_columns, pd.read_html(WIKI_URL)[:2])
+    except Exception:
+        response = requests.get(
+            WIKI_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        current, changes = map(
+            normalize_columns,
+            pd.read_html(response.text)[:2],
+        )
 
     if "Symbol" not in current.columns:
         raise ValueError("Wikipedia current-members table has no Symbol column.")
@@ -197,9 +201,9 @@ def download_daily_prices(tickers):
 # ---------------------------------------------------------------------
 # 3) Apply transparent data-quality rules
 # ---------------------------------------------------------------------
-def create_quality_report(daily):
-    """Create ticker-level quality report and removal flags."""
-    data = daily.sort_values(["ticker", "date"]).copy()
+def _add_quality_flags(data):
+    """Add row-level quality flags used by the report and the cleaner."""
+    data = data.sort_values(["ticker", "date"]).copy()
 
     data["daily_ret"] = data.groupby("ticker")["adj_close"].pct_change()
 
@@ -218,6 +222,20 @@ def create_quality_report(daily):
     data["nonpositive_adj_close"] = data["adj_close"] <= 0
     data["extreme_positive_return"] = data["daily_ret"] > 3.0
     data["extreme_negative_return"] = data["daily_ret"] < -0.95
+    data["bad_row"] = (
+        data["bad_ohlc"]
+        | data["missing_core"]
+        | data["nonpositive_adj_close"]
+        | data["extreme_positive_return"]
+        | data["extreme_negative_return"]
+    )
+
+    return data
+
+
+def create_quality_report(daily):
+    """Create ticker-level quality report and cleaning flags."""
+    data = _add_quality_flags(daily)
 
     report = data.groupby("ticker").agg(
         rows=("date", "size"),
@@ -230,6 +248,7 @@ def create_quality_report(daily):
         extreme_negative_return_rows=("extreme_negative_return", "sum"),
         max_daily_return=("daily_ret", "max"),
         min_daily_return=("daily_ret", "min"),
+        bad_rows=("bad_row", "sum"),
     ).reset_index()
 
     duplicates = data.duplicated(["ticker", "date"]).groupby(data["ticker"]).sum()
@@ -238,45 +257,27 @@ def create_quality_report(daily):
         report["ticker"].map(duplicates).fillna(0).astype(int)
     )
 
-    report["remove_bad_ohlc"] = report["bad_ohlc_rows"] > 0
-    report["remove_duplicate_dates"] = report["duplicate_ticker_date_rows"] > 0
-    report["remove_missing_core"] = report["missing_core_rows"] > 0
-    report["remove_nonpositive_price"] = report["nonpositive_adj_close_rows"] > 0
-    report["remove_repeated_extreme_returns"] = (
-        (report["extreme_positive_return_rows"] >= 2)
-        | (report["extreme_negative_return_rows"] >= 2)
-    )
-
-    removal_rules = {
-        "remove_bad_ohlc": "bad_ohlc",
-        "remove_duplicate_dates": "duplicate_ticker_date",
-        "remove_missing_core": "missing_core_price_or_volume",
-        "remove_nonpositive_price": "nonpositive_adjusted_close",
-        "remove_repeated_extreme_returns": "repeated_extreme_daily_returns",
-    }
-
-    rule_columns = list(removal_rules.keys())
-    report["remove_ticker"] = report[rule_columns].any(axis=1)
-
-    report["removal_reason"] = report.apply(
-        lambda row: "; ".join(
-            reason
-            for rule, reason in removal_rules.items()
-            if row[rule]
-        ),
-        axis=1,
+    report["bad_row_share"] = report["bad_rows"] / report["rows"]
+    report["remove_ticker"] = report["bad_row_share"] > DAILY_BAD_ROW_SHARE_THRESHOLD
+    report["removal_reason"] = report["remove_ticker"].map(
+        {True: "too_many_bad_rows", False: ""}
     )
 
     return report
 
 
 def apply_quality_filter(daily, report):
-    """Remove tickers failing the quality rules."""
+    """Drop bad rows and remove only tickers with too many bad rows."""
+    data = _add_quality_flags(daily)
     removed = report[report["remove_ticker"]].copy()
 
-    clean = daily[~daily["ticker"].isin(removed["ticker"])].copy()
-    clean = clean.sort_values(["ticker", "date"]).reset_index(drop=True)
+    clean = data[~data["bad_row"]].copy()
+    clean = clean.drop_duplicates(["ticker", "date"], keep="last")
 
+    if not removed.empty:
+        clean = clean[~clean["ticker"].isin(removed["ticker"])].copy()
+
+    clean = clean.sort_values(["ticker", "date"]).reset_index(drop=True)
     clean_tickers = sorted(clean["ticker"].unique())
 
     return clean, clean_tickers, removed
