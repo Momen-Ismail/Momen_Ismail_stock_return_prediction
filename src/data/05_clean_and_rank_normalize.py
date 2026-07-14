@@ -1,28 +1,7 @@
-"""Clean and rank-normalize the raw Kelly-style model dataset.
+"""Clean and rank-normalize the raw Kelly-style predictor dataset.
 
-This file is the documented preprocessing step.
-
-Steps:
-1. Read the raw Kelly-style dataset from file 04
-2. Drop rows with missing target
-3. Automatically flag extreme target observations for documentation
-4. Keep numeric predictors only
-5. Split chronologically into train, validation, and test
-6. Winsorize the target using training-sample cutoffs only
-7. Drop predictors with more than 40% missing values in training data
-8. Impute missing predictors using monthly cross-sectional medians
-9. Cross-sectionally rank-normalize predictors by month to [-1, 1]
-10. Save clean full, train, validation, and test files as Parquet
-
-Important:
-- Predictors are not winsorized because rank-normalization already reduces
-  the influence of extreme predictor values.
-- The target is winsorized at the 1st and 99th percentiles using training-sample
-  cutoffs only. This avoids look-ahead bias.
-- Extreme target observations are flagged and saved for documentation, but they
-  are not mechanically deleted.
-- This follows the reference repo style for predictors: monthly median imputation
-  followed by monthly cross-sectional rank-normalization.
+This file does not split the data. Train, validation, and test samples
+are defined later inside the model workflow.
 """
 
 from pathlib import Path
@@ -31,391 +10,297 @@ import sys
 import pandas as pd
 
 
-# Allow direct execution from the project root:
-# python src/data/05_clean_and_rank_normalize.py
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     TARGET,
-    TRAIN_END,
-    VALIDATION_END,
-    MAX_MISSING_SHARE,
-    LOWER_Q,
-    UPPER_Q,
     RAW_KELLY_FILE,
     RAW_PREDICTOR_FILE,
     CLEAN_FULL_FILE,
-    CLEAN_TRAIN_FILE,
-    CLEAN_VALIDATION_FILE,
-    CLEAN_TEST_FILE,
     CLEAN_PREDICTOR_FILE,
     CLEANING_SUMMARY_FILE,
     DROPPED_PREDICTORS_FILE,
     MONTHLY_MEDIAN_FILE,
-    TARGET_WINSOR_FILE,
     EXTREME_TARGET_FILE,
     EXTREME_TARGET_COUNT_FILE,
+)
+from src.feature_definitions import (  # noqa: E402
+    LOCKED_CHARACTERISTIC_COLUMNS,
+    LOCKED_MARKET_COLUMNS,
+    LOCKED_MACRO_COLUMNS,
 )
 
 
 # ---------------------------------------------------------------------
-# 1) Split, target, and rank-normalization helpers
+# 1) Document extreme raw targets
 # ---------------------------------------------------------------------
-def split_data(data):
-    """Split the panel chronologically."""
-    train = data[data["month"] <= TRAIN_END].copy()
+def target_diagnostics(data):
+    """Create reports for unusually large target returns."""
+    thresholds = [0.25, 0.50, 1.00, 2.00]
 
-    validation = data[
-        (data["month"] > TRAIN_END)
-        & (data["month"] <= VALIDATION_END)
-    ].copy()
-
-    test = data[data["month"] > VALIDATION_END].copy()
-
-    return train, validation, test
-
-
-def flag_extreme_targets(data):
-    """Flag extreme target observations for documentation.
-
-    This function does not delete observations.
-
-    Some extreme target returns may be real market events, while others may be
-    caused by adjustment, split, ticker-history, or data-quality problems.
-    Because we cannot automatically know which are real and which are errors,
-    we save an objective report and then use winsorization to limit their
-    influence on squared-error models.
-    """
-    thresholds = [0.25, 0.50, 1.00, 2.00, 5.00, 10.00]
-
-    data = data.copy()
-
-    extreme_rows = data[data[TARGET].abs() > 1.00][
-        ["ticker", "month", TARGET]
-    ].copy()
-
-    extreme_rows = extreme_rows.sort_values(
-        TARGET,
-        key=lambda values: values.abs(),
-        ascending=False,
+    extreme = (
+        data.loc[
+            data[TARGET].abs().gt(1.0),
+            ["ticker", "month", TARGET],
+        ]
+        .assign(abs_target=lambda frame: frame[TARGET].abs())
+        .sort_values("abs_target", ascending=False)
     )
 
-    count_rows = []
+    counts = pd.DataFrame([
+        {
+            "abs_target_threshold": threshold,
+            "count": int(data[TARGET].abs().gt(threshold).sum()),
+            "share": float(data[TARGET].abs().gt(threshold).mean()),
+        }
+        for threshold in thresholds
+    ])
 
-    for threshold in thresholds:
-        count_rows.append({
-            "threshold_abs_return": threshold,
-            "count_above_positive_threshold": int((data[TARGET] > threshold).sum()),
-            "count_below_negative_threshold": int((data[TARGET] < -threshold).sum()),
-            "share_above_positive_threshold": (data[TARGET] > threshold).mean(),
-            "share_below_negative_threshold": (data[TARGET] < -threshold).mean(),
-        })
-
-    extreme_counts = pd.DataFrame(count_rows)
-
-    return extreme_rows, extreme_counts
+    return extreme, counts
 
 
-def winsorize_target_using_train(train, validation, test):
-    """Winsorize the target using training-sample cutoffs only.
-
-    The lower and upper cutoffs are computed only from the training sample.
-    The same cutoffs are then applied to train, validation, and test.
-
-    This avoids look-ahead bias because validation and test information is not
-    used to choose the winsorization thresholds.
-    """
-    lower_cutoff = train[TARGET].quantile(LOWER_Q)
-    upper_cutoff = train[TARGET].quantile(UPPER_Q)
-
-    train = train.copy()
-    validation = validation.copy()
-    test = test.copy()
-
-    train[TARGET] = train[TARGET].clip(lower_cutoff, upper_cutoff)
-    validation[TARGET] = validation[TARGET].clip(lower_cutoff, upper_cutoff)
-    test[TARGET] = test[TARGET].clip(lower_cutoff, upper_cutoff)
-
-    cutoffs = {
-        "lower_quantile": LOWER_Q,
-        "upper_quantile": UPPER_Q,
-        "lower_cutoff_train": lower_cutoff,
-        "upper_cutoff_train": upper_cutoff,
-        "target_treatment": (
-            "target_winsorized_at_training_sample_"
-            f"{LOWER_Q:.2f}_{UPPER_Q:.2f}_quantiles"
-        ),
-    }
-
-    return train, validation, test, cutoffs
-
-
-def impute_and_rank_by_month(data, predictors):
-    """Impute predictors by monthly median and rank-normalize by month.
-
-    For every month separately:
-    1. Take all firms observed in that month.
-    2. Replace missing predictor values with that month's cross-sectional median.
-    3. If a predictor is missing for the whole month, replace remaining missing
-       values by 0.
-    4. Rank-normalize the predictor cross-section to [-1, 1].
-
-    This is the main preprocessing step learned from the reference repo.
-    """
+# ---------------------------------------------------------------------
+# 2) Impute and rank predictors within each month
+# ---------------------------------------------------------------------
+def impute_and_rank(data, predictors):
+    """Impute monthly medians and map cross-sectional ranks to [-1, 1]."""
     data = data.sort_values(["month", "ticker"]).copy()
     data[predictors] = data[predictors].astype("float32")
 
-    median_rows = []
+    diagnostics = []
+
     for month, index in data.groupby("month", sort=False).groups.items():
         values = data.loc[index, predictors]
         medians = values.median()
-        values = values.fillna(medians).fillna(0.0)
 
+        values = values.fillna(medians).fillna(0.0)
         ranks = values.rank(method="average")
+
         if len(values) > 1:
-            values = 2.0 * (ranks - 1.0) / (len(values) - 1.0) - 1.0
+            values = 2 * (ranks - 1) / (len(values) - 1) - 1
         else:
             values.loc[:, :] = 0.0
 
         data.loc[index, predictors] = values.astype("float32")
 
-        median_rows.append({
+        diagnostics.append({
             "month": month,
-            "predictors": len(predictors),
-            "all_missing_predictor_months": int(medians.isna().sum()),
+            "firms": len(index),
+            "all_missing_predictors": int(medians.isna().sum()),
         })
 
-    data = data.sort_values(["ticker", "month"]).reset_index(drop=True)
-    data[predictors] = data[predictors].astype("float32")
-
-    return data, median_rows
+    return (
+        data.sort_values(["ticker", "month"]).reset_index(drop=True),
+        diagnostics,
+    )
 
 
 # ---------------------------------------------------------------------
-# 2) Final checks and saving
+# 3) Validate the final dataset
 # ---------------------------------------------------------------------
-def check_final_data(data, name):
-    """Check that the final model data has no missing values or duplicates."""
-    missing_values = int(data.isna().sum().sum())
+def check_final_data(data):
+    """Check missing values, duplicates, and predictor ranges."""
+    missing = int(data.isna().sum().sum())
     duplicates = int(data.duplicated(["ticker", "month"]).sum())
 
-    if missing_values or duplicates:
+    if missing or duplicates:
         raise ValueError(
-            f"{name} checks failed: "
-            f"missing_values={missing_values}, "
+            f"Final checks failed: missing={missing}, "
             f"duplicate_ticker_months={duplicates}"
         )
 
+    predictors = data.columns.drop(["ticker", "month", TARGET])
+    outside_range = (
+        data[predictors].lt(-1).any().any()
+        or data[predictors].gt(1).any().any()
+    )
 
-def save_parquet(data, path):
-    """Save a DataFrame as Parquet."""
-    try:
-        data.to_parquet(path, index=False)
-
-    except ImportError as error:
-        raise ImportError(
-            "Saving Parquet requires pyarrow or fastparquet. "
-            "Install pyarrow with: pip install pyarrow"
-        ) from error
+    if outside_range:
+        raise ValueError("Rank-normalized predictors are outside [-1, 1].")
 
 
 # ---------------------------------------------------------------------
-# 3) Run cleaning pipeline
+# 4) Run cleaning pipeline
 # ---------------------------------------------------------------------
 def main():
-    print("=" * 80)
-    print("05_clean_and_rank_normalize.py")
-    print("=" * 80)
-
+    """Create and save the full model-ready dataset."""
     data = pd.read_csv(RAW_KELLY_FILE, low_memory=False)
 
     data["month"] = pd.to_datetime(data["month"])
-    data["ticker"] = data["ticker"].astype(str).str.upper().str.strip()
+    data["ticker"] = (
+        data["ticker"]
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
 
-    predictors = (
+    requested = (
         pd.read_csv(RAW_PREDICTOR_FILE)["predictor"]
         .astype(str)
         .tolist()
     )
 
-    predictors = [name for name in predictors if name in data.columns]
+    locked_interactions = [
+        f"{characteristic}_x_{macro}"
+        for macro in LOCKED_MACRO_COLUMNS
+        for characteristic in LOCKED_CHARACTERISTIC_COLUMNS
+    ]
 
-    raw_rows = len(data)
-    raw_predictors = len(predictors)
-    raw_missing_targets = int(data[TARGET].isna().sum())
-    raw_duplicates = int(data.duplicated(["ticker", "month"]).sum())
+    locked_predictors = (
+        LOCKED_CHARACTERISTIC_COLUMNS
+        + LOCKED_MARKET_COLUMNS
+        + locked_interactions
+    )
 
-    if raw_duplicates:
-        raise ValueError(
-            f"Raw data has duplicate ticker-month rows: {raw_duplicates}"
+    missing_locked = [
+        name for name in locked_predictors
+        if name not in requested or name not in data.columns
+    ]
+
+    if missing_locked:
+        print(
+            "Warning: missing locked predictors before cleaning: "
+            f"{missing_locked}"
         )
 
-    # Drop rows where the next-month target is unavailable.
+    raw_rows = len(data)
+    raw_missing_targets = int(data[TARGET].isna().sum())
+    duplicates = int(data.duplicated(["ticker", "month"]).sum())
+
+    if duplicates:
+        raise ValueError(
+            f"Raw data contains {duplicates} duplicate ticker-month rows."
+        )
+
+    # A supervised model cannot use observations without an outcome.
     data = data[data[TARGET].notna()].copy()
 
-    rows_after_dropping_missing_target = len(data)
+    # Keep usable numeric predictors.
+    predictors = [
+        name
+        for name in requested
+        if name in data.columns
+        and pd.api.types.is_numeric_dtype(data[name])
+    ]
 
-    # Automatically flag extreme target observations for documentation.
-    extreme_targets, extreme_target_counts = flag_extreme_targets(data)
+    # Drop only completely empty predictors.
+    dropped = [
+        name
+        for name in predictors
+        if data[name].isna().all()
+    ]
 
-    # Keep numeric predictors only.
+    dropped_locked = [
+        name for name in dropped
+        if name in locked_predictors
+    ]
+
+    if dropped_locked:
+        print(
+            "Warning: locked predictors are completely empty and will be "
+            f"reported as dropped: {dropped_locked}"
+        )
+
     predictors = [
         name
         for name in predictors
-        if pd.api.types.is_numeric_dtype(data[name])
+        if name not in dropped
     ]
 
-    # Split chronologically before learning any preprocessing rule.
-    train, validation, test = split_data(data)
+    extreme_targets, extreme_counts = target_diagnostics(data)
 
-    # Winsorize the target using training-sample cutoffs only.
-    train, validation, test, target_cutoffs = winsorize_target_using_train(
-        train,
-        validation,
-        test,
-    )
-
-    # Drop high-missing predictors based only on training data.
-    missing_share = train[predictors].isna().mean()
-
-    dropped = (
-        missing_share[missing_share > MAX_MISSING_SHARE]
-        .index
-        .tolist()
-    )
-
-    predictors = [name for name in predictors if name not in dropped]
-
-    # Keep only final modeling columns.
     columns = ["ticker", "month", TARGET] + predictors
+    clean = data[columns].copy()
 
-    train = train[columns].copy()
-    validation = validation[columns].copy()
-    test = test[columns].copy()
-
-    # Rank-normalization creates float values, so cast predictors first.
-    train[predictors] = train[predictors].astype("float32")
-    validation[predictors] = validation[predictors].astype("float32")
-    test[predictors] = test[predictors].astype("float32")
-
-    # Repo-style preprocessing:
-    # monthly cross-sectional median imputation + monthly rank-normalization.
-    train, train_medians = impute_and_rank_by_month(train, predictors)
-
-    validation, validation_medians = impute_and_rank_by_month(
-        validation,
+    clean, monthly_diagnostics = impute_and_rank(
+        clean,
         predictors,
     )
 
-    test, test_medians = impute_and_rank_by_month(test, predictors)
+    check_final_data(clean)
 
-    full = (
-        pd.concat([train, validation, test], ignore_index=True)
-        .sort_values(["ticker", "month"])
-        .reset_index(drop=True)
-    )
+    clean.to_parquet(CLEAN_FULL_FILE, index=False)
 
-    check_final_data(train, "Train")
-    check_final_data(validation, "Validation")
-    check_final_data(test, "Test")
-    check_final_data(full, "Full")
-
-    # Save clean model files.
-    save_parquet(full, CLEAN_FULL_FILE)
-    save_parquet(train, CLEAN_TRAIN_FILE)
-    save_parquet(validation, CLEAN_VALIDATION_FILE)
-    save_parquet(test, CLEAN_TEST_FILE)
-
-    # Save metadata files.
-    pd.DataFrame({"predictor": predictors}).to_csv(
+    pd.DataFrame({
+        "predictor": predictors
+    }).to_csv(
         CLEAN_PREDICTOR_FILE,
         index=False,
     )
 
     pd.DataFrame({
         "predictor": dropped,
-        "missing_share_train": missing_share[dropped].values,
-    }).to_csv(DROPPED_PREDICTORS_FILE, index=False)
-
-    monthly_medians = pd.DataFrame(
-        train_medians + validation_medians + test_medians
+        "reason": "completely_missing",
+    }).to_csv(
+        DROPPED_PREDICTORS_FILE,
+        index=False,
     )
 
-    monthly_medians.to_csv(MONTHLY_MEDIAN_FILE, index=False)
+    pd.DataFrame(monthly_diagnostics).to_csv(
+        MONTHLY_MEDIAN_FILE,
+        index=False,
+    )
 
-    pd.DataFrame(
-        target_cutoffs.items(),
-        columns=["item", "value"],
-    ).to_csv(TARGET_WINSOR_FILE, index=False)
+    extreme_targets.to_csv(
+        EXTREME_TARGET_FILE,
+        index=False,
+    )
 
-    extreme_targets.to_csv(EXTREME_TARGET_FILE, index=False)
-    extreme_target_counts.to_csv(EXTREME_TARGET_COUNT_FILE, index=False)
+    extreme_counts.to_csv(
+        EXTREME_TARGET_COUNT_FILE,
+        index=False,
+    )
 
     summary = {
         "raw_rows": raw_rows,
-        "raw_predictors": raw_predictors,
         "raw_missing_targets": raw_missing_targets,
-        "rows_after_dropping_missing_target": rows_after_dropping_missing_target,
-        "extreme_target_abs_above_100pct": len(extreme_targets),
-        "target_lower_quantile": target_cutoffs["lower_quantile"],
-        "target_upper_quantile": target_cutoffs["upper_quantile"],
-        "target_lower_cutoff_train": target_cutoffs["lower_cutoff_train"],
-        "target_upper_cutoff_train": target_cutoffs["upper_cutoff_train"],
-        "final_rows": len(full),
-        "final_columns": full.shape[1],
+        "rows_after_target_drop": len(clean),
+        "final_columns": clean.shape[1],
         "final_predictors": len(predictors),
-        "dropped_high_missing_predictors": len(dropped),
-        "train_rows": len(train),
-        "validation_rows": len(validation),
-        "test_rows": len(test),
-        "train_tickers": train["ticker"].nunique(),
-        "validation_tickers": validation["ticker"].nunique(),
-        "test_tickers": test["ticker"].nunique(),
-        "first_month": full["month"].min(),
-        "last_month": full["month"].max(),
-        "missing_values_final": int(full.isna().sum().sum()),
-        "missing_targets_final": int(full[TARGET].isna().sum()),
+        "locked_stock_characteristics": len(LOCKED_CHARACTERISTIC_COLUMNS),
+        "locked_market_variables": len(LOCKED_MARKET_COLUMNS),
+        "locked_macro_variables": len(LOCKED_MACRO_COLUMNS),
+        "locked_interactions": len(locked_interactions),
+        "missing_locked_predictors": len(missing_locked),
+        "dropped_empty_locked_predictors": len(dropped_locked),
+        "dropped_empty_predictors": len(dropped),
+        "unique_tickers": clean["ticker"].nunique(),
+        "first_month": clean["month"].min(),
+        "last_month": clean["month"].max(),
+        "missing_values_final": int(clean.isna().sum().sum()),
+        "missing_targets_final": int(clean[TARGET].isna().sum()),
         "duplicate_ticker_months_final": int(
-            full.duplicated(["ticker", "month"]).sum()
-        ),
-        "target_treatment": target_cutoffs["target_treatment"],
-        "target_outlier_handling": (
-            "extreme_targets_flagged_for_documentation_not_deleted"
+            clean.duplicated(["ticker", "month"]).sum()
         ),
         "predictor_imputation": "monthly_cross_sectional_median",
-        "predictor_normalization": (
-            "monthly_cross_sectional_rank_to_minus_one_plus_one"
-        ),
-        "file_format": "parquet",
+        "predictor_normalization": "monthly_rank_to_minus_one_plus_one",
+        "target_treatment": "raw_target_not_winsorized",
+        "sample_splitting": "deferred_to_model_workflow",
     }
 
     pd.DataFrame(
         summary.items(),
         columns=["item", "value"],
-    ).to_csv(CLEANING_SUMMARY_FILE, index=False)
-
-    print(f"Saved cleaned ranked full dataset: {full.shape}")
-    print(f"Final predictors: {len(predictors)}")
-    print(f"Dropped high-missing predictors: {len(dropped)}")
-    print(f"Extreme targets flagged abs(return) > 100%: {len(extreme_targets)}")
-    print(
-        "Target winsorization cutoffs from train: "
-        f"{target_cutoffs['lower_cutoff_train']:.6f}, "
-        f"{target_cutoffs['upper_cutoff_train']:.6f}"
+    ).to_csv(
+        CLEANING_SUMMARY_FILE,
+        index=False,
     )
-    print(f"Train rows: {len(train):,}")
-    print(f"Validation rows: {len(validation):,}")
-    print(f"Test rows: {len(test):,}")
-    print(f"Date range: {full['month'].min()} to {full['month'].max()}")
-    print(f"Missing values final: {summary['missing_values_final']}")
-    print(f"Missing targets final: {summary['missing_targets_final']}")
+
+    print(f"Saved: {CLEAN_FULL_FILE}")
+    print(f"Shape: {clean.shape}")
+    print(f"Predictors: {len(predictors)}")
+    print(f"Tickers: {clean['ticker'].nunique()}")
+    print(f"Dropped empty predictors: {len(dropped)}")
     print(
-        "Duplicate ticker-months final: "
+        f"Date range: {clean['month'].min()} "
+        f"to {clean['month'].max()}"
+    )
+    print(f"Missing values: {summary['missing_values_final']}")
+    print(
+        f"Duplicate ticker-months: "
         f"{summary['duplicate_ticker_months_final']}"
     )
-    print(f"Saved Parquet files in: {CLEAN_FULL_FILE.parent}")
-    print("=" * 80)
 
 
 if __name__ == "__main__":
