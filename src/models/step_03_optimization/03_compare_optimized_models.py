@@ -1,4 +1,4 @@
-"""Combine and rank all optimized-model results."""
+"""Rank optimized models using validation data only."""
 
 from pathlib import Path
 import sys
@@ -9,44 +9,73 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR  # noqa: E402
-from src.models.utils.evaluation import (  # noqa: E402
-    rank_models, wide_summary,
-)
+from src.models.utils.evaluation import rank_models  # noqa: E402
+
 
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "optimization"
+ACTIVE_MODELS = {
+    "historical_mean",
+    "ols_3",
+    "pls_optimized",
+    "elastic_net_optimized",
+    "decision_tree_optimized",
+    "random_forest_optimized",
+}
 
 
 def main():
-    inputs = {
-        "linear": OUTPUT_DIR / "optimized_linear_model_metrics.csv",
-        "tree": OUTPUT_DIR / "optimized_tree_model_metrics.csv",
-    }
-    missing = [str(path) for path in inputs.values() if not path.exists()]
-    if missing:
-        raise FileNotFoundError(f"Run both optimized-model scripts first: {missing}")
-
-    frames = []
-    for group, path in inputs.items():
-        frame = pd.read_csv(path)
-        frame["model_group"] = group
-        frames.append(frame)
-
-    metrics = pd.concat(frames, ignore_index=True)
-    validation = rank_models(metrics, "validation")
-    test = rank_models(metrics, "test")
-
-    metrics.to_csv(OUTPUT_DIR / "optimized_all_model_metrics.csv", index=False)
-    validation.to_csv(
-        OUTPUT_DIR / "optimized_model_validation_ranking.csv", index=False
-    )
-    test.to_csv(OUTPUT_DIR / "optimized_model_test_ranking.csv", index=False)
-    wide_summary(metrics).to_csv(
-        OUTPUT_DIR / "optimized_model_summary_wide.csv", index=False
+    linear_metrics = pd.read_csv(
+        OUTPUT_DIR / "optimized_linear_model_metrics.csv"
     )
 
-    columns = ["rank_by_oos_r2", "model", "rmse", "oos_r2_vs_train_mean"]
-    print("Validation ranking:\n", validation[columns])
-    print("Test ranking:\n", test[columns])
+    tree_metrics = pd.read_csv(
+        OUTPUT_DIR / "optimized_tree_model_metrics.csv"
+    )
+
+    if linear_metrics["sample"].eq("test").any() or tree_metrics["sample"].eq("test").any():
+        raise ValueError("Optimized-model comparison must not contain test rows.")
+
+    linear_metrics["model_group"] = "linear"
+    tree_metrics["model_group"] = "tree"
+
+    metrics = pd.concat(
+        [
+            linear_metrics,
+            tree_metrics,
+        ],
+        ignore_index=True,
+    )
+    metrics = metrics[metrics["model"].isin(ACTIVE_MODELS)].copy()
+
+    validation_ranking = rank_models(
+        metrics,
+        "validation",
+    )
+
+    metrics.to_csv(
+        OUTPUT_DIR / "optimized_all_model_metrics.csv",
+        index=False,
+    )
+
+    validation_ranking.to_csv(
+        OUTPUT_DIR / "optimized_model_validation_ranking.csv",
+        index=False,
+    )
+
+    print("\nOptimized-model validation ranking:")
+    print(
+        validation_ranking[
+            [
+                "rank",
+                "model",
+                "model_group",
+                "monthly_mse",
+                "monthly_rmse",
+                "oos_r2",
+                "prediction_target_correlation",
+            ]
+        ].to_string(index=False)
+    )
 
 
 if __name__ == "__main__":

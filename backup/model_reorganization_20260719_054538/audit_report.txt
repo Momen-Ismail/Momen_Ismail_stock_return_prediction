@@ -1,0 +1,127 @@
+Pre-edit audit: 2026-07-19
+
+1. step_01_fixed/02_fixed_tree_models.py was overwritten by optimized-tree code.
+   It loaded tuned parameters, used optimized model names, and wrote to
+   output/models/optimization.
+
+2. Git commits 8303d8c and 0d4c297 contain earlier fixed-tree implementations.
+   The saved fixed predictions establish that the last-used Decision Tree had
+   max_depth=3 and min_samples_leaf=500: this specification exactly reproduces
+   the saved validation predictions, while min_samples_leaf=20 does not.
+
+3. The saved fixed output uses standardized names decision_tree_fixed,
+   random_forest_fixed, and gradient_boosting_fixed. Existing Git history uses
+   older aliases rf_fixed and gbrt_fixed in some revisions.
+
+4. step_03_optimization/02_optimized_tree_models.py expects a combined tuning
+   file and utility signatures that do not match the current per-family tuning
+   outputs and current estimation utility.
+
+5. The active tuning scripts save one results file and one best-parameter file
+   per model family. No combined tuning comparison script currently exists.
+
+6. Comparison scripts use validation results, but they do not all explicitly
+   reject input files containing test rows.
+
+7. The current output tree has fixed, tuning, and optimization folders only.
+   Robustness, test, and portfolio source scripts exist in older stage folders.
+   They must be preserved while organized copies are added to the requested
+   six-stage layout.
+
+8. src/models/step_02_tuning/03_compare_scaling.py is tracked by Git but absent
+   from the pre-edit working tree. It must be restored rather than deleted.
+
+9. No output files were changed or removed during this audit.
+
+Script-by-script purpose audit
+------------------------------
+
+step_01_fixed/01_fixed_linear_models.py
+  Purpose: historical mean, OLS-3, fixed PLS, and fixed Elastic Net.
+  Samples: train and validation. Output: output/models/fixed.
+  Utilities: data.arrays/load_model_data/ols3_predictors and
+  evaluation.evaluate_model. Folder and filename match the purpose.
+
+step_01_fixed/02_fixed_tree_models.py
+  Pre-edit purpose in code: optimized Decision Tree, Random Forest, and
+  Gradient Boosting. Samples: train and validation. Pre-edit output:
+  output/models/optimization. The file was misplaced/overwritten and its
+  filename and folder did not match its code.
+
+step_01_fixed/03_compare_fixed_models.py
+  Purpose: combine fixed linear and tree metrics and rank validation results.
+  Output: output/models/fixed. Folder and filename match the purpose.
+
+step_01_fixed/04_diagnose_fixed_models.py
+  Purpose: fixed-model data and prediction diagnostics. Samples: train and
+  validation. Output: output/models/fixed/diagnostics. Correctly placed as an
+  optional fixed-stage diagnostic and intentionally preserved.
+
+step_02_tuning/01_tune_linear_models.py
+  Purpose: annual expanding-window tuning for PLS and Elastic Net.
+  Sample: train only. Output: per-family files under output/models/tuning.
+  Folder and filename match the purpose.
+
+step_02_tuning/02_tune_tree_models.py
+  Purpose: annual expanding-window tuning for Decision Tree, Random Forest,
+  and Gradient Boosting. Sample: train only. Output: per-family files under
+  output/models/tuning. Folder and filename match the purpose.
+
+step_02_tuning/03_compare_scaling.py
+  Purpose: optional scaling diagnostic. It was absent from the working tree
+  but tracked in Git. It is not the requested tuning-results comparison and is
+  preserved separately.
+
+step_03_optimization/01_optimized_linear_models.py
+  Purpose: historical mean, OLS-3, optimized PLS, and optimized Elastic Net.
+  Samples: train and validation. Output: output/models/optimization. Correctly
+  placed and named.
+
+step_03_optimization/02_optimized_tree_models.py
+  Purpose: optimized Decision Tree, Random Forest, and Gradient Boosting.
+  Samples: train and validation. Output: output/models/optimization. Correctly
+  placed, but pre-edit parameter-file and utility calls were incompatible with
+  the current tuning outputs and utilities.
+
+step_03_optimization/03_compare_optimized_models.py
+  Purpose: combine optimized linear and tree metrics and rank validation.
+  Output: output/models/optimization. Correctly placed and named.
+
+step_03_optimization/04_compare_fixed_vs_optimized.py
+  Purpose: validation-only combined ranking and family-level comparison.
+  Output: output/models/optimization. Correctly placed and named.
+
+step_03_optimization/05_time_series_robustness.py
+  Purpose: expanding/rolling annual robustness for optimized tree models.
+  Samples: train and validation only. Pre-edit output: optimization. Its true
+  purpose belongs to stage 04 robustness. The original is preserved.
+
+step_03_optimization/06_final_test_evaluation.py
+  Purpose: refit prespecified models on development and evaluate test.
+  Samples: development and test. Pre-edit output: output/models/final_test.
+  Its true purpose belongs to stage 05 test. The original is preserved.
+
+step_04_portfolio/01_portfolio_sorts.py
+step_04_portfolio/02_compare_portfolio_results.py
+step_04_portfolio/03_final_model_and_portfolio_summary.py
+  Purpose: final-test portfolio construction, ranking, and combined summary.
+  Sample: test only. Output: output/models/portfolio. Their true purpose belongs
+  to stage 06 portfolio. The originals are preserved.
+
+utils/data.py
+  Purpose: chronological samples, float32 arrays, annual folds, and OLS-3
+  predictors. Signatures match the active fixed and tuning callers.
+
+utils/estimation.py
+  Purpose: shared fitting, tuning, saving, and parameter loading. Pre-edit
+  fit_models and load_best_parameters signatures were inconsistent with older
+  callers; the active per-family tuning save format was otherwise clear.
+
+utils/evaluation.py
+  Purpose: monthly/pooled predictive metrics and monthly-MSE ranking. The
+  canonical rank column is rank. wide_summary is absent and must stay absent.
+
+utils/portfolio.py
+  Purpose: portfolio sorts, statistics, ranking, and block bootstrap. It is an
+  additional useful utility and is preserved even though the requested minimal
+  utility list names only data.py, estimation.py, and evaluation.py.

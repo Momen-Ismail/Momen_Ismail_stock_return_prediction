@@ -8,10 +8,11 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     TARGET,
+    MAX_COMPUSTAT_AGE_MONTHS,
     MONTHLY_STOCK_FILE,
     COMPUSTAT_RAW_FILE,
     COMPUSTAT_CLEAN_FILE,
@@ -20,21 +21,27 @@ from src.config import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------
-# 1) Helpers
+# Helpers
 # ---------------------------------------------------------------------
 def column(data, name):
-    """Return a column or a missing-value series."""
-    if name in data.columns:
-        return data[name]
-
-    return pd.Series(np.nan, index=data.index)
+    return (
+        data[name]
+        if name in data.columns
+        else pd.Series(np.nan, index=data.index)
+    )
 
 
 def ratio(numerator, denominator):
-    """Calculate a ratio safely."""
-    numerator = pd.to_numeric(numerator, errors="coerce")
+    numerator = pd.to_numeric(
+        numerator,
+        errors="coerce",
+    )
+
     denominator = (
-        pd.to_numeric(denominator, errors="coerce")
+        pd.to_numeric(
+            denominator,
+            errors="coerce",
+        )
         .replace(0, np.nan)
     )
 
@@ -45,74 +52,117 @@ def ratio(numerator, denominator):
 
 
 # ---------------------------------------------------------------------
-# 2) Clean Compustat and construct accounting characteristics
+# Clean annual Compustat data
 # ---------------------------------------------------------------------
 def clean_compustat():
-    """Create compact annual accounting predictors with a six-month lag."""
-    comp = pd.read_csv(COMPUSTAT_RAW_FILE, low_memory=False)
-    comp.columns = comp.columns.str.lower().str.strip()
+    comp = pd.read_csv(
+        COMPUSTAT_RAW_FILE,
+        low_memory=False,
+    )
 
-    required = [
-        "tic",
-        "gvkey",
-        "datadate",
-        "act",
-        "lct",
-        "invt",
-        "rect",
-        "che",
-        "sale",
-        "capx",
-        "oancf",
-    ]
-    missing = [name for name in required if name not in comp.columns]
+    comp.columns = (
+        comp.columns
+        .str.lower()
+        .str.strip()
+    )
 
-    if missing:
-        raise ValueError(f"Missing Compustat columns: {missing}")
+    comp["ticker"] = (
+        comp["tic"]
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
 
-    comp["ticker"] = comp["tic"].astype(str).str.upper().str.strip()
-    comp["gvkey"] = comp["gvkey"].astype(str).str.strip()
-    comp["datadate"] = pd.to_datetime(comp["datadate"], errors="coerce")
+    comp["gvkey"] = (
+        comp["gvkey"]
+        .astype(str)
+        .str.strip()
+    )
 
-    comp = comp[
+    comp["datadate"] = pd.to_datetime(
+        comp["datadate"],
+        errors="coerce",
+    )
+
+    comp = comp.loc[
         comp["datadate"].notna()
-        & ~comp["ticker"].isin(["", "NAN", "NONE"])
+        & ~comp["ticker"].isin(
+            ["", "NAN", "NONE"]
+        )
     ].copy()
 
-    # Keep standard consolidated industrial USD statements
-    for name, value in {
+    filters = {
         "consol": "C",
         "indfmt": "INDL",
         "datafmt": "STD",
+        "popsrc": "D",
         "curcd": "USD",
-    }.items():
+    }
+
+    for name, value in filters.items():
         if name in comp.columns:
-            comp = comp[comp[name].eq(value)].copy()
+            comp = comp.loc[
+                comp[name].eq(value)
+            ].copy()
 
     numeric_columns = [
-        "act", "lct",
-        "at", "lt", "ceq", "seq", "teq",
-        "txditc", "txdb", "itcb",
-        "che", "dlc", "dltt", "dt",
-        "pstk", "pstkrv", "pstkl",
-        "invt", "rect", "ppegt", "ppent",
-        "csho", "sale", "cogs", "xsga", "xrd",
-        "oiadp", "ib", "oancf", "capx", "dvt",
-        "sstk", "prstkc", "mkvalt", "prcc_c", "prcc_f",
+        "act",
+        "lct",
+        "at",
+        "lt",
+        "ceq",
+        "seq",
+        "teq",
+        "txditc",
+        "txdb",
+        "itcb",
+        "che",
+        "dlc",
+        "dltt",
+        "dt",
+        "pstk",
+        "pstkrv",
+        "pstkl",
+        "invt",
+        "rect",
+        "ppegt",
+        "ppent",
+        "csho",
+        "sale",
+        "cogs",
+        "xsga",
+        "xrd",
+        "oiadp",
+        "ib",
+        "oancf",
+        "capx",
+        "dvt",
+        "sstk",
+        "prstkc",
+        "mkvalt",
+        "prcc_c",
+        "prcc_f",
         "sic",
     ]
 
     for name in numeric_columns:
         if name in comp.columns:
-            comp[name] = pd.to_numeric(comp[name], errors="coerce")
+            comp[name] = pd.to_numeric(
+                comp[name],
+                errors="coerce",
+            )
 
     comp = (
-        comp.sort_values(["ticker", "datadate", "gvkey"])
-        .drop_duplicates(["ticker", "datadate"], keep="last")
-        .copy()
+        comp.sort_values(
+            ["gvkey", "datadate", "ticker"]
+        )
+        .drop_duplicates(
+            ["gvkey", "datadate"],
+            keep="last",
+        )
+        .reset_index(drop=True)
     )
 
-    # Book equity
     preferred_stock = (
         column(comp, "pstkrv")
         .fillna(column(comp, "pstkl"))
@@ -131,8 +181,14 @@ def clean_compustat():
 
     shareholders_equity = (
         column(comp, "seq")
-        .fillna(column(comp, "ceq") + preferred_stock)
-        .fillna(column(comp, "at") - column(comp, "lt"))
+        .fillna(
+            column(comp, "ceq")
+            + preferred_stock
+        )
+        .fillna(
+            column(comp, "at")
+            - column(comp, "lt")
+        )
         .fillna(column(comp, "teq"))
     )
 
@@ -142,13 +198,21 @@ def clean_compustat():
         - preferred_stock
     )
 
-    comp.loc[comp["book_equity"] <= 0, "book_equity"] = np.nan
+    comp.loc[
+        comp["book_equity"].le(0),
+        "book_equity",
+    ] = np.nan
 
-    # Market equity and debt
     comp["comp_market_equity"] = (
         column(comp, "mkvalt")
-        .fillna(column(comp, "prcc_f").abs() * column(comp, "csho"))
-        .fillna(column(comp, "prcc_c").abs() * column(comp, "csho"))
+        .fillna(
+            column(comp, "prcc_f").abs()
+            * column(comp, "csho")
+        )
+        .fillna(
+            column(comp, "prcc_c").abs()
+            * column(comp, "csho")
+        )
     )
 
     comp["debt_total"] = (
@@ -159,9 +223,16 @@ def clean_compustat():
         )
     )
 
-    # Operating profitability
-    comp["xrd_missing"] = column(comp, "xrd").isna().astype(int)
-    comp["xrd_filled"] = column(comp, "xrd").fillna(0)
+    comp["xrd_missing"] = (
+        column(comp, "xrd")
+        .isna()
+        .astype(int)
+    )
+
+    xrd_filled = (
+        column(comp, "xrd")
+        .fillna(0)
+    )
 
     comp["operating_profit"] = (
         column(comp, "oiadp")
@@ -169,12 +240,11 @@ def clean_compustat():
             column(comp, "sale")
             - column(comp, "cogs")
             - column(comp, "xsga").fillna(0)
-            + comp["xrd_filled"]
+            + xrd_filled
         )
     )
 
-    # Final accounting characteristics
-    ratios = {
+    ratio_definitions = {
         "be_me": (
             comp["book_equity"],
             comp["comp_market_equity"],
@@ -208,7 +278,8 @@ def clean_compustat():
             column(comp, "lct"),
         ),
         "quick_ratio": (
-            column(comp, "act") - column(comp, "invt"),
+            column(comp, "act")
+            - column(comp, "invt"),
             column(comp, "lct"),
         ),
         "capx_at": (
@@ -216,7 +287,7 @@ def clean_compustat():
             column(comp, "at"),
         ),
         "rd_at": (
-            comp["xrd_filled"],
+            xrd_filled,
             column(comp, "at"),
         ),
         "ppe_at": (
@@ -247,7 +318,8 @@ def clean_compustat():
             column(comp, "rect"),
         ),
         "accruals_at": (
-            column(comp, "ib") - column(comp, "oancf"),
+            column(comp, "ib")
+            - column(comp, "oancf"),
             column(comp, "at"),
         ),
         "equity_issuance_at": (
@@ -260,12 +332,17 @@ def clean_compustat():
         ),
     }
 
-    for name, (numerator, denominator) in ratios.items():
-        comp[name] = ratio(numerator, denominator)
+    for name, values in ratio_definitions.items():
+        numerator, denominator = values
+
+        comp[name] = ratio(
+            numerator,
+            denominator,
+        )
 
     comp["log_comp_market_equity"] = np.log(
         comp["comp_market_equity"].where(
-            comp["comp_market_equity"] > 0
+            comp["comp_market_equity"].gt(0)
         )
     )
 
@@ -276,31 +353,69 @@ def clean_compustat():
         .astype(int)
     )
 
-    comp["sic2"] = np.floor(column(comp, "sic") / 100)
+    comp["sic2"] = np.floor(
+        column(comp, "sic") / 100
+    )
 
-    # Annual growth
-    comp = comp.sort_values(["gvkey", "datadate"]).copy()
+    comp = (
+        comp.sort_values(
+            ["gvkey", "datadate"]
+        )
+        .reset_index(drop=True)
+    )
+
     grouped = comp.groupby("gvkey")
 
-    comp["at_lag1"] = grouped["at"].shift(1)
-    comp["sale_lag1"] = grouped["sale"].shift(1)
-    comp["invt_lag1"] = grouped["invt"].shift(1)
-    comp["ppegt_lag1"] = grouped["ppegt"].shift(1)
-    comp["capx_lag1"] = grouped["capx"].shift(1)
+    previous_date = (
+        grouped["datadate"]
+        .shift(1)
+    )
+
+    previous_assets = (
+        grouped["at"]
+        .shift(1)
+    )
+
+    previous_sales = (
+        grouped["sale"]
+        .shift(1)
+    )
+
+    previous_inventory = (
+        grouped["invt"]
+        .shift(1)
+    )
+
+    previous_ppe = (
+        grouped["ppegt"]
+        .shift(1)
+    )
+
+    previous_capx = (
+        grouped["capx"]
+        .shift(1)
+    )
+
+    annual_gap = (
+        comp["datadate"] - previous_date
+    ).dt.days.between(300, 430)
 
     comp["asset_growth"] = ratio(
-        column(comp, "at") - comp["at_lag1"],
-        comp["at_lag1"],
+        column(comp, "at")
+        - previous_assets,
+        previous_assets,
     )
 
     comp["sales_growth"] = ratio(
-        column(comp, "sale") - comp["sale_lag1"],
-        comp["sale_lag1"],
+        column(comp, "sale")
+        - previous_sales,
+        previous_sales,
     )
 
     comp["capx_growth"] = ratio(
-        column(comp, "capx") - comp["capx_lag1"],
-        comp["capx_lag1"],
+        column(comp, "capx")
+        - previous_capx,
+        previous_capx,
     )
 
     comp["ppeinv_gr1a"] = ratio(
@@ -309,13 +424,24 @@ def clean_compustat():
             + column(comp, "invt")
         )
         - (
-            comp["ppegt_lag1"]
-            + comp["invt_lag1"]
+            previous_ppe
+            + previous_inventory
         ),
-        comp["at_lag1"],
+        previous_assets,
     )
 
-    # Accounting data becomes usable six months after fiscal year-end
+    growth_columns = [
+        "asset_growth",
+        "sales_growth",
+        "capx_growth",
+        "ppeinv_gr1a",
+    ]
+
+    comp.loc[
+        ~annual_gap,
+        growth_columns,
+    ] = np.nan
+
     comp["comp_available_month"] = (
         comp["datadate"]
         + pd.DateOffset(months=6)
@@ -324,6 +450,7 @@ def clean_compustat():
 
     keep_columns = [
         "ticker",
+        "gvkey",
         "datadate",
         "comp_available_month",
         "sic2",
@@ -358,22 +485,36 @@ def clean_compustat():
 
     comp = (
         comp[keep_columns]
-        .rename(columns={"datadate": "comp_datadate"})
-        .sort_values(["ticker", "comp_available_month"])
+        .rename(
+            columns={
+                "gvkey": "comp_gvkey",
+                "datadate": "comp_datadate",
+            }
+        )
+        .sort_values(
+            [
+                "ticker",
+                "comp_available_month",
+                "comp_datadate",
+                "comp_gvkey",
+            ]
+        )
+        .drop_duplicates(
+            ["ticker", "comp_available_month"],
+            keep="last",
+        )
         .reset_index(drop=True)
     )
-
-    comp.to_csv(COMPUSTAT_CLEAN_FILE, index=False)
 
     return comp
 
 
 # ---------------------------------------------------------------------
-# 3) Merge the latest available fundamentals into each stock-month
+# Merge most recent available Compustat report
 # ---------------------------------------------------------------------
 def merge_compustat(monthly, comp):
-    """Attach the latest available annual Compustat report."""
     monthly = monthly.copy()
+
     monthly["ticker"] = (
         monthly["ticker"]
         .astype(str)
@@ -381,8 +522,19 @@ def merge_compustat(monthly, comp):
         .str.strip()
     )
 
-    monthly = monthly.sort_values(["month", "ticker"])
-    comp = comp.sort_values(["comp_available_month", "ticker"])
+    monthly = (
+        monthly.sort_values(
+            ["month", "ticker"]
+        )
+        .reset_index(drop=True)
+    )
+
+    comp = (
+        comp.sort_values(
+            ["comp_available_month", "ticker"]
+        )
+        .reset_index(drop=True)
+    )
 
     panel = pd.merge_asof(
         monthly,
@@ -393,35 +545,136 @@ def merge_compustat(monthly, comp):
         direction="backward",
     )
 
-    panel["has_compustat_annual"] = (
-        panel["comp_datadate"].notna().astype(int)
+    month_number = (
+        panel["month"].dt.year * 12
+        + panel["month"].dt.month
     )
 
-    return panel.sort_values(
-        ["ticker", "month"]
-    ).reset_index(drop=True)
+    available_month_number = (
+        panel["comp_available_month"].dt.year * 12
+        + panel["comp_available_month"].dt.month
+    )
+
+    accounting_age = (
+        month_number
+        - available_month_number
+    )
+
+    stale_report = (
+        panel["comp_datadate"].notna()
+        & accounting_age.gt(
+            MAX_COMPUSTAT_AGE_MONTHS
+        )
+    )
+
+    compustat_columns = [
+        name
+        for name in comp.columns
+        if name != "ticker"
+    ]
+
+    panel.loc[
+        stale_report,
+        compustat_columns,
+    ] = np.nan
+
+    panel["has_compustat_annual"] = (
+        panel["comp_datadate"]
+        .notna()
+        .astype(int)
+    )
+
+    panel = (
+        panel.sort_values(
+            ["ticker", "month"]
+        )
+        .reset_index(drop=True)
+    )
+
+    return panel, int(stale_report.sum())
 
 
 # ---------------------------------------------------------------------
-# 4) Run pipeline
+# Main
 # ---------------------------------------------------------------------
 def main():
-    """Merge annual Compustat fundamentals into the monthly panel."""
-    monthly = pd.read_csv(MONTHLY_STOCK_FILE, low_memory=False)
-    monthly["month"] = pd.to_datetime(monthly["month"])
-
-    panel = merge_compustat(
-        monthly,
-        clean_compustat(),
+    monthly = pd.read_parquet(
+        MONTHLY_STOCK_FILE
     )
 
-    panel.to_csv(PANEL_WITH_FUNDAMENTALS_FILE, index=False)
+    monthly["month"] = pd.to_datetime(
+        monthly["month"]
+    )
 
-    print(f"Saved: {PANEL_WITH_FUNDAMENTALS_FILE}")
-    print(f"Shape: {panel.shape}")
-    print(f"Tickers: {panel['ticker'].nunique()}")
-    print(f"Compustat matches: {panel['has_compustat_annual'].sum():,}")
-    print(f"Missing targets: {panel[TARGET].isna().sum():,}")
+    comp = clean_compustat()
+
+    panel, stale_reports = merge_compustat(
+        monthly,
+        comp,
+    )
+
+    for output_file in [
+        COMPUSTAT_CLEAN_FILE,
+        PANEL_WITH_FUNDAMENTALS_FILE,
+    ]:
+        output_file.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+    comp.to_parquet(
+        COMPUSTAT_CLEAN_FILE,
+        index=False,
+    )
+
+    panel.to_parquet(
+        PANEL_WITH_FUNDAMENTALS_FILE,
+        index=False,
+    )
+
+    timing_violations = (
+        panel["comp_available_month"]
+        .gt(panel["month"])
+        .sum()
+    )
+
+    print("\nFinal summary")
+    print(f"Clean Compustat rows: {len(comp):,}")
+    print(
+        "Clean Compustat tickers: "
+        f"{comp['ticker'].nunique():,}"
+    )
+    print(f"Panel rows: {len(panel):,}")
+    print(f"Panel columns: {panel.shape[1]:,}")
+    print(
+        "Panel tickers: "
+        f"{panel['ticker'].nunique():,}"
+    )
+    print(
+        "Compustat matches: "
+        f"{panel['has_compustat_annual'].sum():,}"
+    )
+    print(
+        "Unmatched observations: "
+        f"{panel['has_compustat_annual'].eq(0).sum():,}"
+    )
+    print(
+        "Stale reports invalidated: "
+        f"{stale_reports:,}"
+    )
+    print(
+        "Timing violations: "
+        f"{timing_violations:,}"
+    )
+    print(
+        "Missing targets: "
+        f"{panel[TARGET].isna().sum():,}"
+    )
+    print(f"Saved: {COMPUSTAT_CLEAN_FILE}")
+    print(
+        f"Saved: "
+        f"{PANEL_WITH_FUNDAMENTALS_FILE}"
+    )
 
 
 if __name__ == "__main__":

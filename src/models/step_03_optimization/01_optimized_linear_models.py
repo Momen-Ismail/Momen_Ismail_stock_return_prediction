@@ -1,15 +1,12 @@
-"""Refit linear models with validation-selected hyperparameters."""
+"""Estimate optimized linear models on train and validation."""
 
 from pathlib import Path
 import sys
-import warnings
 
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.decomposition import PCA
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -17,108 +14,162 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR, TARGET  # noqa: E402
-from src.models.utils.data import load_model_data  # noqa: E402
-from src.models.utils.estimation import fit_models, load_best_parameters  # noqa: E402
+from src.models.utils.data import (  # noqa: E402
+    arrays,
+    load_model_data,
+    ols3_predictors,
+)
+from src.models.utils.estimation import load_best_parameters  # noqa: E402
+from src.models.utils.evaluation import evaluate_model  # noqa: E402
 
-warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-TUNING_FILE = MODEL_OUTPUT_DIR / "tuning" / "linear_best_parameters.csv"
+TUNING_DIR = MODEL_OUTPUT_DIR / "tuning"
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "optimization"
-RANDOM_STATE = 42
 
 
-def optimized_models(parameters):
-    """Construct linear models from validation-selected parameters."""
-    common = dict(
-        max_iter=5_000,
-        tol=1e-3,
-        selection="random",
-        random_state=RANDOM_STATE,
+def optimized_models(all_predictors):
+    """Define the optimized linear model specifications."""
+
+    pls_parameters = load_best_parameters(
+        TUNING_DIR / "pls_best_parameters.csv"
     )
+
+    elastic_net_parameters = load_best_parameters(
+        TUNING_DIR / "elastic_net_best_parameters.csv"
+    )
+
     return {
-        "pcr_optimized": make_pipeline(
-            StandardScaler(),
-            PCA(int(parameters["pcr"]["n_components"]), random_state=RANDOM_STATE),
-            LinearRegression(),
-        ),
-        "pls_optimized": make_pipeline(
-            StandardScaler(),
-            PLSRegression(int(parameters["pls"]["n_components"])),
-        ),
-        "ridge_optimized": make_pipeline(
-            StandardScaler(),
-            Ridge(alpha=float(parameters["ridge"]["alpha"])),
-        ),
-        "lasso_optimized": make_pipeline(
-            StandardScaler(),
-            Lasso(alpha=float(parameters["lasso"]["alpha"]), **common),
-        ),
-        "enet_optimized": make_pipeline(
-            StandardScaler(),
-            ElasticNet(
-                alpha=float(parameters["elastic_net"]["alpha"]),
-                l1_ratio=float(parameters["elastic_net"]["l1_ratio"]),
-                **common,
+        "ols_3": (
+            make_pipeline(
+                StandardScaler(),
+                LinearRegression(),
             ),
+            ols3_predictors(),
+        ),
+        "pls_optimized": (
+            make_pipeline(
+                StandardScaler(),
+                PLSRegression(
+                    n_components=int(
+                        pls_parameters["n_components"]
+                    ),
+                    scale=False,
+                ),
+            ),
+            all_predictors,
+        ),
+        "elastic_net_optimized": (
+            make_pipeline(
+                StandardScaler(),
+                ElasticNet(
+                    alpha=float(
+                        elastic_net_parameters["alpha"]
+                    ),
+                    l1_ratio=float(
+                        elastic_net_parameters["l1_ratio"]
+                    ),
+                    max_iter=20_000,
+                    tol=1e-4,
+                ),
+            ),
+            all_predictors,
         ),
     }
 
 
-def save_interpretations(models, predictors):
-    """Save PCA loadings, PLS weights, and Lasso sparsity diagnostics."""
-    pca = models["pcr_optimized"].named_steps["pca"]
-    components = [f"PC{i + 1}" for i in range(pca.n_components_)]
-    pd.DataFrame({
-        "component": components,
-        "explained_variance_ratio": pca.explained_variance_ratio_,
-        "cumulative_explained_variance": np.cumsum(pca.explained_variance_ratio_),
-    }).to_csv(OUTPUT_DIR / "optimized_pca_explained_variance.csv", index=False)
-    pd.DataFrame(
-        pca.components_.T, index=predictors, columns=components
-    ).rename_axis("predictor").reset_index().to_csv(
-        OUTPUT_DIR / "optimized_pca_loadings.csv", index=False
-    )
-
-    pls = models["pls_optimized"].named_steps["plsregression"]
-    pls_components = [f"PLS{i + 1}" for i in range(pls.x_weights_.shape[1])]
-    pd.DataFrame(
-        pls.x_weights_, index=predictors, columns=pls_components
-    ).rename_axis("predictor").reset_index().to_csv(
-        OUTPUT_DIR / "optimized_pls_weights.csv", index=False
-    )
-
-    lasso = models["lasso_optimized"].named_steps["lasso"]
-    pd.DataFrame([{
-        "predictors": len(predictors),
-        "nonzero_coefficients": int(np.count_nonzero(lasso.coef_)),
-        "zero_coefficients": int(np.count_nonzero(lasso.coef_ == 0)),
-    }]).to_csv(OUTPUT_DIR / "optimized_lasso_sparsity.csv", index=False)
-
-
 def main():
-    samples, predictors = load_model_data()
-    parameters = load_best_parameters(
-        TUNING_FILE, ["pcr", "pls", "ridge", "lasso", "elastic_net"]
+    samples, all_predictors = load_model_data(
+        ("train", "validation")
     )
-    models = optimized_models(parameters)
-    metrics, predictions, coefficients = fit_models(
-        models,
+
+    models = optimized_models(all_predictors)
+
+    all_metrics = []
+    all_predictions = []
+    all_coefficients = []
+
+    train_mean = samples["train"][TARGET].mean()
+
+    mean_predictions = {
+        sample: np.full(len(data), train_mean)
+        for sample, data in samples.items()
+    }
+
+    metrics, predictions = evaluate_model(
+        "historical_mean",
         samples,
-        predictors,
+        mean_predictions,
         TARGET,
-        effect=("coef_", "coefficient"),
+        train_mean,
     )
+
+    all_metrics.append(metrics)
+    all_predictions.append(predictions)
+
+    print(metrics.to_string(index=False))
+
+    for name, (model, predictors) in models.items():
+        print(f"Estimating {name} ({len(predictors)} predictors)")
+
+        model_arrays = arrays(samples, predictors)
+
+        X_train, y_train = model_arrays["train"]
+        model.fit(X_train, y_train)
+
+        model_predictions = {
+            sample: model.predict(X).reshape(-1)
+            for sample, (X, _) in model_arrays.items()
+        }
+
+        metrics, predictions = evaluate_model(
+            name,
+            samples,
+            model_predictions,
+            TARGET,
+            train_mean,
+        )
+
+        all_metrics.append(metrics)
+        all_predictions.append(predictions)
+
+        estimator = model[-1]
+        coefficients = np.asarray(estimator.coef_).reshape(-1)
+        if len(coefficients) == len(predictors):
+            all_coefficients.append(
+                pd.DataFrame({
+                    "model": name,
+                    "predictor": predictors,
+                    "coefficient": coefficients,
+                }).sort_values("coefficient", key=abs, ascending=False)
+            )
+
+        print(metrics.to_string(index=False))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    metrics.to_csv(OUTPUT_DIR / "optimized_linear_model_metrics.csv", index=False)
-    predictions.to_parquet(
-        OUTPUT_DIR / "optimized_linear_model_predictions.parquet", index=False
+
+    pd.concat(
+        all_metrics,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR / "optimized_linear_model_metrics.csv",
+        index=False,
     )
-    if not coefficients.empty:
-        coefficients.to_csv(
-            OUTPUT_DIR / "optimized_linear_model_coefficients.csv", index=False
-        )
-    save_interpretations(models, predictors)
+
+    pd.concat(
+        all_predictions,
+        ignore_index=True,
+    ).to_parquet(
+        OUTPUT_DIR / "optimized_linear_model_predictions.parquet",
+        index=False,
+    )
+
+    pd.concat(
+        all_coefficients,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR / "optimized_linear_model_coefficients.csv",
+        index=False,
+    )
 
 
 if __name__ == "__main__":

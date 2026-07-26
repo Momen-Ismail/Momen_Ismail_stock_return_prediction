@@ -1,43 +1,50 @@
-"""Load modeling samples and construct predictor arrays."""
+"""Load model samples and define chronological validation folds."""
 
 import numpy as np
 import pandas as pd
 
 from src.config import (
     TARGET,
-    TRAIN_END,
     VALIDATION_END,
     CLEAN_FULL_FILE,
     CLEAN_PREDICTOR_FILE,
+    TRAIN_END,
 )
 
 
-def load_model_data(sample_names=("train", "validation", "test")):
-    """Return requested chronological samples and their common predictors."""
-    full = pd.read_parquet(CLEAN_FULL_FILE)
-    full["month"] = pd.to_datetime(full["month"])
 
-    all_samples = {
-        "train": full[full["month"] <= TRAIN_END].copy(),
+
+def load_model_data(sample_names=("train", "validation")):
+    """Load the model data and return the requested samples."""
+    full = pd.read_parquet(CLEAN_FULL_FILE)
+
+    predictors = (
+        pd.read_csv(CLEAN_PREDICTOR_FILE)["predictor"]
+        .astype(str)
+        .tolist()
+    )
+
+    samples = {
+        "train": full[full["month"] <= TRAIN_END],
         "validation": full[
             (full["month"] > TRAIN_END)
             & (full["month"] <= VALIDATION_END)
-        ].copy(),
-        "test": full[full["month"] > VALIDATION_END].copy(),
+        ],
+        "development": full[full["month"] <= VALIDATION_END],
+        "test": full[full["month"] > VALIDATION_END],
     }
 
-    samples = {name: all_samples[name] for name in sample_names}
-    predictors = pd.read_csv(CLEAN_PREDICTOR_FILE)["predictor"].astype(str).tolist()
-    predictors = [name for name in predictors if name in next(iter(samples.values()))]
-
-    if not predictors or any(TARGET not in data for data in samples.values()):
-        raise ValueError("Modeling data are missing the target or predictors.")
+    samples = {
+        name: samples[name].reset_index(drop=True)
+        for name in sample_names
+    }
 
     return samples, predictors
 
 
+
 def arrays(samples, predictors, target=TARGET):
-    """Return float32 predictor and target arrays for each sample."""
+    """Convert each sample into predictor and target arrays."""
     return {
         name: (
             data[predictors].to_numpy(dtype=np.float32),
@@ -47,38 +54,31 @@ def arrays(samples, predictors, target=TARGET):
     }
 
 
-def expanding_month_folds(data, n_splits=3, min_train_fraction=0.50):
-    """Create expanding folds without splitting a calendar month across samples."""
-    months = np.array(sorted(data["month"].unique()))
-    first_validation = int(len(months) * min_train_fraction)
-    validation_blocks = np.array_split(months[first_validation:], n_splits)
+def expanding_year_folds(data, first_validation_year=2005):
+    """Create annual expanding-window validation folds."""
+    years = data["month"].dt.year
     folds = []
 
-    for block in validation_blocks:
-        train_mask = data["month"] < block[0]
-        validation_mask = data["month"].isin(block)
+    for year in sorted(years[years >= first_validation_year].unique()):
+        train_mask = years < year
+        validation_mask = years == year
+
         folds.append({
-            "train_index": data.index[train_mask],
-            "validation_index": data.index[validation_mask],
-            "train_end": pd.Timestamp(block[0]) - pd.offsets.MonthEnd(1),
-            "validation_start": pd.Timestamp(block[0]),
-            "validation_end": pd.Timestamp(block[-1]),
+            "train_index": np.flatnonzero(train_mask),
+            "validation_index": np.flatnonzero(validation_mask),
         })
+
     return folds
 
 
-def ols3_predictors(predictors):
-    """Select size, book-to-market, momentum, and their macro interactions."""
-    candidates = [
-        ("avg_log_dolvol_1m", "log_comp_market_equity"),
-        ("be_me",),
-        ("mom12m", "mom6m"),
+
+def ols3_predictors():
+    """Return size, book-to-market, and momentum predictors."""
+    return [
+        "log_comp_market_equity",
+        "be_me",
+        "mom12m",
     ]
-    base = [next((name for name in group if name in predictors), None) for group in candidates]
-    base = [name for name in base if name]
-    if len(base) != 3:
-        raise ValueError("Could not identify the three OLS-3 characteristics.")
-    return base + [
-        name for name in predictors
-        if any(name.startswith(f"{characteristic}_x_") for characteristic in base)
-    ]
+    
+
+    

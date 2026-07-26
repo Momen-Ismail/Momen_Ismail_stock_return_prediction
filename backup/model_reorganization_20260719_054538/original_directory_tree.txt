@@ -1,0 +1,39 @@
+src/models/
+  README.md
+  __init__.py
+  step_01_fixed/
+    01_fixed_linear_models.py
+    02_fixed_tree_models.py
+    03_compare_fixed_models.py
+    04_diagnose_fixed_models.py
+    __init__.py
+  step_02_tuning/
+    01_tune_linear_models.py
+    02_tune_tree_models.py
+    __init__.py
+    [03_compare_scaling.py tracked by Git but absent from the working tree]
+  step_03_optimization/
+    01_optimized_linear_models.py
+    02_optimized_tree_models.py
+    03_compare_optimized_models.py
+    04_compare_fixed_vs_optimized.py
+    05_time_series_robustness.py
+    06_final_test_evaluation.py
+    __init__.py
+  step_04_portfolio/
+    01_portfolio_sorts.py
+    02_compare_portfolio_results.py
+    03_final_model_and_portfolio_summary.py
+    __init__.py
+  utils/
+    __init__.py
+    data.py
+    estimation.py
+    evaluation.py
+    portfolio.py
+
+output/models/
+  fixed/
+    diagnostics/
+  optimization/
+  tuning/

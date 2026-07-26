@@ -1,133 +1,136 @@
-"""Clean and rank-normalize the raw Kelly-style predictor dataset.
+"""Create the final winsorized Kelly-style model dataset.
 
-This file does not split the data. Train, validation, and test samples
-are defined later inside the model workflow.
+Continuous firm characteristics are imputed with same-month medians
+and winsorized within each month. Original units are preserved.
+Binary characteristics, market variables, macro variables, and SIC2
+dummies remain unchanged. Interactions are created between continuous
+firm characteristics and lagged macro variables.
 """
 
 from pathlib import Path
 import sys
 
+import numpy as np
 import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     TARGET,
+    PREDICTOR_WINSOR_LOWER,
+    PREDICTOR_WINSOR_UPPER,
     RAW_KELLY_FILE,
     RAW_PREDICTOR_FILE,
     CLEAN_FULL_FILE,
     CLEAN_PREDICTOR_FILE,
     CLEANING_SUMMARY_FILE,
-    DROPPED_PREDICTORS_FILE,
-    MONTHLY_MEDIAN_FILE,
-    EXTREME_TARGET_FILE,
-    EXTREME_TARGET_COUNT_FILE,
 )
 from src.feature_definitions import (  # noqa: E402
-    LOCKED_CHARACTERISTIC_COLUMNS,
+    LOCKED_BINARY_CHARACTERISTIC_COLUMNS,
+    LOCKED_CONTINUOUS_CHARACTERISTIC_COLUMNS,
+    LOCKED_INTERACTION_CHARACTERISTIC_COLUMNS,
     LOCKED_MARKET_COLUMNS,
     LOCKED_MACRO_COLUMNS,
 )
 
 
 # ---------------------------------------------------------------------
-# 1) Document extreme raw targets
+# 1) Impute and winsorize continuous firm characteristics
 # ---------------------------------------------------------------------
-def target_diagnostics(data):
-    """Create reports for unusually large target returns."""
-    thresholds = [0.25, 0.50, 1.00, 2.00]
-
-    extreme = (
-        data.loc[
-            data[TARGET].abs().gt(1.0),
-            ["ticker", "month", TARGET],
-        ]
-        .assign(abs_target=lambda frame: frame[TARGET].abs())
-        .sort_values("abs_target", ascending=False)
+def clean_continuous_characteristics(
+    data,
+    characteristics,
+):
+    monthly_medians = (
+        data.groupby("month")[characteristics]
+        .transform("median")
     )
 
-    counts = pd.DataFrame([
-        {
-            "abs_target_threshold": threshold,
-            "count": int(data[TARGET].abs().gt(threshold).sum()),
-            "share": float(data[TARGET].abs().gt(threshold).mean()),
-        }
-        for threshold in thresholds
-    ])
-
-    return extreme, counts
-
-
-# ---------------------------------------------------------------------
-# 2) Impute and rank predictors within each month
-# ---------------------------------------------------------------------
-def impute_and_rank(data, predictors):
-    """Impute monthly medians and map cross-sectional ranks to [-1, 1]."""
-    data = data.sort_values(["month", "ticker"]).copy()
-    data[predictors] = data[predictors].astype("float32")
-
-    diagnostics = []
-
-    for month, index in data.groupby("month", sort=False).groups.items():
-        values = data.loc[index, predictors]
-        medians = values.median()
-
-        values = values.fillna(medians).fillna(0.0)
-        ranks = values.rank(method="average")
-
-        if len(values) > 1:
-            values = 2 * (ranks - 1) / (len(values) - 1) - 1
-        else:
-            values.loc[:, :] = 0.0
-
-        data.loc[index, predictors] = values.astype("float32")
-
-        diagnostics.append({
-            "month": month,
-            "firms": len(index),
-            "all_missing_predictors": int(medians.isna().sum()),
-        })
-
-    return (
-        data.sort_values(["ticker", "month"]).reset_index(drop=True),
-        diagnostics,
+    data[characteristics] = (
+        data[characteristics]
+        .fillna(monthly_medians)
+        .fillna(0.0)
+        .astype("float64")
     )
 
+    lower = (
+        data.groupby("month")[characteristics]
+        .transform(
+            "quantile",
+            q=PREDICTOR_WINSOR_LOWER,
+        )
+    )
+
+    upper = (
+        data.groupby("month")[characteristics]
+        .transform(
+            "quantile",
+            q=PREDICTOR_WINSOR_UPPER,
+        )
+    )
+
+    values = data[characteristics]
+
+    data[characteristics] = (
+        values
+        .mask(values < lower, lower)
+        .mask(values > upper, upper)
+    )
+
+    return data
+
 
 # ---------------------------------------------------------------------
-# 3) Validate the final dataset
+# 2) Create continuous-characteristic macro interactions
 # ---------------------------------------------------------------------
-def check_final_data(data):
-    """Check missing values, duplicates, and predictor ranges."""
-    missing = int(data.isna().sum().sum())
-    duplicates = int(data.duplicated(["ticker", "month"]).sum())
+def create_interactions(
+    data,
+    characteristics,
+    macro_variables,
+):
+    blocks = []
 
-    if missing or duplicates:
-        raise ValueError(
-            f"Final checks failed: missing={missing}, "
-            f"duplicate_ticker_months={duplicates}"
+    for macro in macro_variables:
+        block = pd.DataFrame(
+            {
+                f"{characteristic}_x_{macro}": (
+                    data[characteristic]
+                    * data[macro]
+                )
+                for characteristic in characteristics
+            },
+            index=data.index,
         )
 
-    predictors = data.columns.drop(["ticker", "month", TARGET])
-    outside_range = (
-        data[predictors].lt(-1).any().any()
-        or data[predictors].gt(1).any().any()
+        blocks.append(block)
+
+    interactions = pd.concat(
+        blocks,
+        axis=1,
     )
 
-    if outside_range:
-        raise ValueError("Rank-normalized predictors are outside [-1, 1].")
+    data = pd.concat(
+        [data, interactions],
+        axis=1,
+    )
+
+    return data, interactions.columns.tolist()
 
 
 # ---------------------------------------------------------------------
-# 4) Run cleaning pipeline
+# 3) Build and save the final model dataset
 # ---------------------------------------------------------------------
 def main():
-    """Create and save the full model-ready dataset."""
-    data = pd.read_csv(RAW_KELLY_FILE, low_memory=False)
+    data = pd.read_parquet(
+        RAW_KELLY_FILE
+    )
 
-    data["month"] = pd.to_datetime(data["month"])
+    data["month"] = pd.to_datetime(
+        data["month"]
+    )
+
     data["ticker"] = (
         data["ticker"]
         .astype(str)
@@ -135,172 +138,257 @@ def main():
         .str.strip()
     )
 
-    requested = (
-        pd.read_csv(RAW_PREDICTOR_FILE)["predictor"]
+    base_predictors = (
+        pd.read_csv(
+            RAW_PREDICTOR_FILE
+        )["predictor"]
         .astype(str)
         .tolist()
     )
 
-    locked_interactions = [
-        f"{characteristic}_x_{macro}"
-        for macro in LOCKED_MACRO_COLUMNS
-        for characteristic in LOCKED_CHARACTERISTIC_COLUMNS
-    ]
-
-    locked_predictors = (
-        LOCKED_CHARACTERISTIC_COLUMNS
-        + LOCKED_MARKET_COLUMNS
-        + locked_interactions
+    continuous = list(
+        LOCKED_CONTINUOUS_CHARACTERISTIC_COLUMNS
     )
 
-    missing_locked = [
-        name for name in locked_predictors
-        if name not in requested or name not in data.columns
-    ]
+    binary = list(
+        LOCKED_BINARY_CHARACTERISTIC_COLUMNS
+    )
 
-    if missing_locked:
-        print(
-            "Warning: missing locked predictors before cleaning: "
-            f"{missing_locked}"
-        )
+    interaction_characteristics = list(
+        LOCKED_INTERACTION_CHARACTERISTIC_COLUMNS
+    )
+
+    market_variables = list(
+        LOCKED_MARKET_COLUMNS
+    )
+
+    macro_variables = list(
+        LOCKED_MACRO_COLUMNS
+    )
+
+    sic2_dummies = [
+        name
+        for name in base_predictors
+        if name.startswith("sic2_")
+    ]
 
     raw_rows = len(data)
-    raw_missing_targets = int(data[TARGET].isna().sum())
-    duplicates = int(data.duplicated(["ticker", "month"]).sum())
+    first_raw_month = data["month"].min()
 
-    if duplicates:
-        raise ValueError(
-            f"Raw data contains {duplicates} duplicate ticker-month rows."
-        )
-
-    # A supervised model cannot use observations without an outcome.
-    data = data[data[TARGET].notna()].copy()
-
-    # Keep usable numeric predictors.
-    predictors = [
-        name
-        for name in requested
-        if name in data.columns
-        and pd.api.types.is_numeric_dtype(data[name])
-    ]
-
-    # Drop only completely empty predictors.
-    dropped = [
-        name
-        for name in predictors
-        if data[name].isna().all()
-    ]
-
-    dropped_locked = [
-        name for name in dropped
-        if name in locked_predictors
-    ]
-
-    if dropped_locked:
-        print(
-            "Warning: locked predictors are completely empty and will be "
-            f"reported as dropped: {dropped_locked}"
-        )
-
-    predictors = [
-        name
-        for name in predictors
-        if name not in dropped
-    ]
-
-    extreme_targets, extreme_counts = target_diagnostics(data)
-
-    columns = ["ticker", "month", TARGET] + predictors
-    clean = data[columns].copy()
-
-    clean, monthly_diagnostics = impute_and_rank(
-        clean,
-        predictors,
+    data = (
+        data.loc[
+            data["month"] > first_raw_month
+        ]
+        .copy()
     )
 
-    check_final_data(clean)
+    rows_dropped = (
+        raw_rows - len(data)
+    )
 
-    clean.to_parquet(CLEAN_FULL_FILE, index=False)
+    data[binary] = (
+        data[binary]
+        .fillna(0)
+        .astype("int8")
+    )
+
+    data[sic2_dummies] = (
+        data[sic2_dummies]
+        .astype("int8")
+    )
+
+    data = clean_continuous_characteristics(
+        data,
+        continuous,
+    )
+
+    data, interactions = create_interactions(
+        data,
+        interaction_characteristics,
+        macro_variables,
+    )
+
+    predictors = (
+        base_predictors
+        + interactions
+    )
+
+    clean = (
+        data[
+            [
+                "ticker",
+                "month",
+                TARGET,
+            ]
+            + predictors
+        ]
+        .sort_values(
+            ["ticker", "month"]
+        )
+        .reset_index(drop=True)
+    )
+
+    missing_values = int(
+        clean.isna().sum().sum()
+    )
+
+    infinite_values = int(
+        np.isinf(
+            clean.select_dtypes(
+                include=np.number
+            )
+        ).sum().sum()
+    )
+
+    duplicate_rows = int(
+        clean.duplicated(
+            ["ticker", "month"]
+        ).sum()
+    )
+
+    if (
+        missing_values
+        or infinite_values
+        or duplicate_rows
+    ):
+        raise ValueError(
+            "Final dataset failed checks: "
+            f"missing={missing_values}, "
+            f"infinite={infinite_values}, "
+            f"duplicates={duplicate_rows}"
+        )
+
+    CLEAN_FULL_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    CLEANING_SUMMARY_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    clean.to_parquet(
+        CLEAN_FULL_FILE,
+        index=False,
+    )
 
     pd.DataFrame({
-        "predictor": predictors
+        "predictor": predictors,
     }).to_csv(
         CLEAN_PREDICTOR_FILE,
         index=False,
     )
 
-    pd.DataFrame({
-        "predictor": dropped,
-        "reason": "completely_missing",
-    }).to_csv(
-        DROPPED_PREDICTORS_FILE,
-        index=False,
-    )
-
-    pd.DataFrame(monthly_diagnostics).to_csv(
-        MONTHLY_MEDIAN_FILE,
-        index=False,
-    )
-
-    extreme_targets.to_csv(
-        EXTREME_TARGET_FILE,
-        index=False,
-    )
-
-    extreme_counts.to_csv(
-        EXTREME_TARGET_COUNT_FILE,
-        index=False,
-    )
-
     summary = {
         "raw_rows": raw_rows,
-        "raw_missing_targets": raw_missing_targets,
-        "rows_after_target_drop": len(clean),
+        "rows_dropped_first_month": rows_dropped,
+        "final_rows": len(clean),
         "final_columns": clean.shape[1],
+        "base_predictors": len(base_predictors),
+        "continuous_characteristics": len(continuous),
+        "binary_characteristics": len(binary),
+        "market_variables": len(market_variables),
+        "macro_variables": len(macro_variables),
+        "sic2_dummies": len(sic2_dummies),
+        "interactions": len(interactions),
         "final_predictors": len(predictors),
-        "locked_stock_characteristics": len(LOCKED_CHARACTERISTIC_COLUMNS),
-        "locked_market_variables": len(LOCKED_MARKET_COLUMNS),
-        "locked_macro_variables": len(LOCKED_MACRO_COLUMNS),
-        "locked_interactions": len(locked_interactions),
-        "missing_locked_predictors": len(missing_locked),
-        "dropped_empty_locked_predictors": len(dropped_locked),
-        "dropped_empty_predictors": len(dropped),
         "unique_tickers": clean["ticker"].nunique(),
         "first_month": clean["month"].min(),
         "last_month": clean["month"].max(),
-        "missing_values_final": int(clean.isna().sum().sum()),
-        "missing_targets_final": int(clean[TARGET].isna().sum()),
-        "duplicate_ticker_months_final": int(
-            clean.duplicated(["ticker", "month"]).sum()
+        "missing_values": missing_values,
+        "infinite_values": infinite_values,
+        "duplicate_ticker_months": duplicate_rows,
+        "continuous_missing_treatment": (
+            "same_month_median"
         ),
-        "predictor_imputation": "monthly_cross_sectional_median",
-        "predictor_normalization": "monthly_rank_to_minus_one_plus_one",
-        "target_treatment": "raw_target_not_winsorized",
-        "sample_splitting": "deferred_to_model_workflow",
+        "continuous_outlier_treatment": (
+            "same_month_1_99_percent_winsorization"
+        ),
+        "continuous_scaling": "none",
+        "market_macro_scaling": "none",
+        "target_treatment": "unchanged",
+        "interaction_definition": (
+            "winsorized_continuous_characteristic_"
+            "times_previous_month_macro"
+        ),
     }
 
     pd.DataFrame(
         summary.items(),
-        columns=["item", "value"],
+        columns=[
+            "item",
+            "value",
+        ],
     ).to_csv(
         CLEANING_SUMMARY_FILE,
         index=False,
     )
 
-    print(f"Saved: {CLEAN_FULL_FILE}")
-    print(f"Shape: {clean.shape}")
-    print(f"Predictors: {len(predictors)}")
-    print(f"Tickers: {clean['ticker'].nunique()}")
-    print(f"Dropped empty predictors: {len(dropped)}")
+    print("\nFinal summary")
+    print(f"Raw rows: {raw_rows:,}")
     print(
-        f"Date range: {clean['month'].min()} "
+        "Rows dropped from first month: "
+        f"{rows_dropped:,}"
+    )
+    print(f"Final rows: {len(clean):,}")
+    print(f"Final columns: {clean.shape[1]}")
+    print(
+        f"Final tickers: "
+        f"{clean['ticker'].nunique()}"
+    )
+    print(
+        f"Base predictors: "
+        f"{len(base_predictors)}"
+    )
+    print(
+        "Continuous characteristics: "
+        f"{len(continuous)}"
+    )
+    print(
+        f"Binary characteristics: "
+        f"{len(binary)}"
+    )
+    print(
+        f"Market variables: "
+        f"{len(market_variables)}"
+    )
+    print(
+        f"Macro variables: "
+        f"{len(macro_variables)}"
+    )
+    print(
+        f"SIC2 dummies: "
+        f"{len(sic2_dummies)}"
+    )
+    print(
+        f"Interactions: "
+        f"{len(interactions)}"
+    )
+    print(
+        f"Final predictors: "
+        f"{len(predictors)}"
+    )
+    print(
+        f"Missing values: "
+        f"{missing_values}"
+    )
+    print(
+        f"Infinite values: "
+        f"{infinite_values}"
+    )
+    print(
+        "Duplicate ticker-months: "
+        f"{duplicate_rows}"
+    )
+    print(
+        f"Date range: "
+        f"{clean['month'].min()} "
         f"to {clean['month'].max()}"
     )
-    print(f"Missing values: {summary['missing_values_final']}")
-    print(
-        f"Duplicate ticker-months: "
-        f"{summary['duplicate_ticker_months_final']}"
-    )
+    print(f"Saved: {CLEAN_FULL_FILE}")
+    print(f"Saved: {CLEAN_PREDICTOR_FILE}")
+    print(f"Saved: {CLEANING_SUMMARY_FILE}")
 
 
 if __name__ == "__main__":

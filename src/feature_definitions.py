@@ -1,5 +1,9 @@
 """Locked predictor definitions for the stock-return ML project."""
 
+
+# ---------------------------------------------------------------------
+# 1) Firm-level stock and accounting characteristics
+# ---------------------------------------------------------------------
 LOCKED_CHARACTERISTIC_COLUMNS = [
     # Returns and momentum
     "ret_1m",
@@ -28,7 +32,7 @@ LOCKED_CHARACTERISTIC_COLUMNS = [
     "price_to_ma12",
     "dist_from_high_12m",
     "avg_range_1m",
-
+ 
     # Valuation and firm size
     "be_me",
     "ocf_me",
@@ -67,11 +71,49 @@ LOCKED_CHARACTERISTIC_COLUMNS = [
     "sales_growth",
     "ppeinv_gr1a",
 
-    # Missing-R&D indicator
+    # Missing-information indicators
     "xrd_missing",
+    "has_compustat_annual",
+]
+
+LOCKED_INTERACTION_CHARACTERISTIC_COLUMNS = [
+    name
+    for name in LOCKED_CHARACTERISTIC_COLUMNS
+    if name != "has_compustat_annual"
 ]
 
 
+# ---------------------------------------------------------------------
+# 2) Binary firm characteristics
+# ---------------------------------------------------------------------
+LOCKED_BINARY_CHARACTERISTIC_COLUMNS = [
+    "dividend_dummy",
+    "xrd_missing",
+    "has_compustat_annual",
+]
+
+
+# ---------------------------------------------------------------------
+# 3) Continuous firm characteristics
+# ---------------------------------------------------------------------
+LOCKED_CONTINUOUS_CHARACTERISTIC_COLUMNS = [
+    name
+    for name in LOCKED_CHARACTERISTIC_COLUMNS
+    if name not in LOCKED_BINARY_CHARACTERISTIC_COLUMNS
+]
+
+
+# ---------------------------------------------------------------------
+# 4) Firm characteristics used in macro interactions
+# ---------------------------------------------------------------------
+LOCKED_INTERACTION_CHARACTERISTIC_COLUMNS = (
+    LOCKED_CONTINUOUS_CHARACTERISTIC_COLUMNS.copy()
+)
+
+
+# ---------------------------------------------------------------------
+# 5) Market and VIX variables
+# ---------------------------------------------------------------------
 LOCKED_MARKET_COLUMNS = [
     "market_ret_1m",
     "market_vol_1m",
@@ -80,6 +122,9 @@ LOCKED_MARKET_COLUMNS = [
 ]
 
 
+# ---------------------------------------------------------------------
+# 6) Welch-Goyal macro variables
+# ---------------------------------------------------------------------
 LOCKED_MACRO_COLUMNS = [
     "wg_dp",
     "wg_ep",

@@ -8,7 +8,7 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     SAMPLE_START,
@@ -18,8 +18,6 @@ from src.config import (  # noqa: E402
     GSPC_DAILY_FILE,
     VIX_DAILY_FILE,
     FAMA_FRENCH_RF_FILE,
-    MONTHLY_QUALITY_REPORT_FILE,
-    MONTHLY_REMOVED_TICKERS_FILE,
     MONTHLY_STOCK_FILE,
 )
 
@@ -28,12 +26,13 @@ from src.config import (  # noqa: E402
 # 1) Build monthly stock variables
 # ---------------------------------------------------------------------
 def build_monthly_panel(daily):
-    """Aggregate daily prices into monthly stock characteristics."""
     daily = daily.sort_values(["ticker", "date"]).copy()
 
     daily["month"] = daily["date"].dt.to_period("M").dt.to_timestamp("M")
+
     daily["stock_daily_ret"] = (
-        daily.groupby("ticker")["adj_close"].pct_change()
+        daily.groupby("ticker")["adj_close"]
+        .pct_change(fill_method=None)
     )
 
     daily["dolvol"] = daily["adj_close"] * daily["volume"]
@@ -46,7 +45,7 @@ def build_monthly_panel(daily):
 
     daily["range_daily"] = (
         (daily["high"] - daily["low"])
-        / daily["close"].where(daily["close"] > 0)
+        / daily["close"]
     )
 
     daily["zero_volume"] = daily["volume"].eq(0)
@@ -54,6 +53,7 @@ def build_monthly_panel(daily):
     monthly = (
         daily.groupby(["ticker", "month"], as_index=False)
         .agg(
+            n_trading_days=("date", "size"),
             last_adj_close=("adj_close", "last"),
             avg_dolvol_1m=("dolvol", "mean"),
             std_dolvol_1m=("dolvol", "std"),
@@ -72,67 +72,89 @@ def build_monthly_panel(daily):
         .reset_index(drop=True)
     )
 
+    invalid_volume = monthly["avg_dolvol_1m"].eq(0)
+
+    monthly.loc[
+        invalid_volume,
+        [
+            "avg_dolvol_1m",
+            "std_dolvol_1m",
+            "avg_log_dolvol_1m",
+            "amihud_1m",
+            "zerotrade_1m",
+        ],
+    ] = np.nan
+
+    grouped = monthly.groupby("ticker")
+
+    previous_month = grouped["month"].shift(1)
+    previous_price = grouped["last_adj_close"].shift(1)
+    expected_month = previous_month + pd.offsets.MonthEnd(1)
+
     monthly["ret_1m"] = (
-        monthly.groupby("ticker")["last_adj_close"].pct_change()
+        monthly["last_adj_close"] / previous_price - 1.0
     )
 
-    return monthly, daily
+    gap_returns = (
+        previous_month.notna()
+        & monthly["month"].ne(expected_month)
+    )
 
+    monthly.loc[gap_returns, "ret_1m"] = np.nan
+
+    return monthly, daily, int(gap_returns.sum())
 
 # ---------------------------------------------------------------------
-# 2) Remove unreliable ticker histories
+# 2) Remove fragmented ticker histories
 # ---------------------------------------------------------------------
-def remove_bad_monthly_tickers(monthly):
-    """Remove tickers with repeated implausible monthly returns."""
-    monthly = monthly.copy()
-    monthly["implausible_monthly_return"] = (
-        monthly["ret_1m"].gt(3.0)
-        | monthly["ret_1m"].lt(-0.95)
+def remove_fragmented_tickers(monthly, daily):
+    data = monthly.sort_values(["ticker", "month"]).copy()
+
+    data["month_number"] = (
+        data["month"].dt.year * 12
+        + data["month"].dt.month
     )
 
-    report = (
-        monthly.groupby("ticker", as_index=False)
-        .agg(
-            rows=("month", "size"),
-            first_month=("month", "min"),
-            last_month=("month", "max"),
-            implausible_months=("implausible_monthly_return", "sum"),
-            max_monthly_return=("ret_1m", "max"),
-            min_monthly_return=("ret_1m", "min"),
-        )
+    data["previous_month_number"] = (
+        data.groupby("ticker")["month_number"].shift(1)
     )
 
-    report["remove_ticker"] = report["implausible_months"].ge(2)
-    report.to_csv(MONTHLY_QUALITY_REPORT_FILE, index=False)
+    data["missing_months"] = (
+        data["month_number"]
+        - data["previous_month_number"]
+        - 1
+    )
 
-    removed = report[report["remove_ticker"]].copy()
-    removed["removal_reason"] = "repeated_implausible_monthly_returns"
-    removed.to_csv(MONTHLY_REMOVED_TICKERS_FILE, index=False)
+    maximum_gap = (
+        data.groupby("ticker")["missing_months"]
+        .max()
+    )
 
-    bad_tickers = removed["ticker"].tolist()
+    bad_tickers = maximum_gap[
+        maximum_gap > 2
+    ].index.tolist()
 
     monthly = monthly[
         ~monthly["ticker"].isin(bad_tickers)
-    ].drop(columns="implausible_monthly_return").copy()
+    ].copy()
 
-    print(f"Removed monthly-quality tickers: {len(bad_tickers)}")
+    daily = daily[
+        ~daily["ticker"].isin(bad_tickers)
+    ].copy()
 
-    if bad_tickers:
-        print(f"Removed tickers: {', '.join(bad_tickers)}")
-
-    return monthly, bad_tickers
-
+    return monthly, daily, bad_tickers
 
 # ---------------------------------------------------------------------
-# 3) Add rolling stock predictors
+# 3) Compound simple returns
 # ---------------------------------------------------------------------
 def compound(returns):
-    """Compound simple returns."""
     return np.prod(1.0 + returns) - 1.0
 
 
+# ---------------------------------------------------------------------
+# 4) Add rolling stock predictors
+# ---------------------------------------------------------------------
 def add_stock_features(monthly):
-    """Create momentum, volatility, liquidity, and trend predictors."""
     monthly = monthly.sort_values(["ticker", "month"]).copy()
     grouped = monthly.groupby("ticker")
 
@@ -157,8 +179,12 @@ def add_stock_features(monthly):
         .reset_index(level=0, drop=True)
     )
 
+    previous_dolvol = grouped["avg_dolvol_1m"].shift(1)
+
     monthly["dolvol_growth_1m"] = (
-        grouped["avg_dolvol_1m"].pct_change()
+        monthly["avg_dolvol_1m"]
+        / previous_dolvol.where(previous_dolvol > 0)
+        - 1.0
     )
 
     ma12 = (
@@ -176,51 +202,44 @@ def add_stock_features(monthly):
     )
 
     monthly["price_to_ma12"] = monthly["last_adj_close"] / ma12
+
     monthly["dist_from_high_12m"] = (
         monthly["last_adj_close"] / high12 - 1.0
     )
 
-    return monthly[
-        monthly["month"] >= SAMPLE_START
-    ].copy()
+    return monthly
 
 
 # ---------------------------------------------------------------------
-# 4) Add market and VIX variables
+# 5) Load daily market and VIX data
 # ---------------------------------------------------------------------
 def load_market_data():
-    """Load permanent daily S&P 500 and VIX files."""
     gspc = pd.read_csv(GSPC_DAILY_FILE)
-    gspc["series"] = "GSPC"
-
     vix = pd.read_csv(VIX_DAILY_FILE)
-    vix["series"] = "VIX"
 
-    market = pd.concat([gspc, vix], ignore_index=True)
-    market["date"] = pd.to_datetime(market["date"])
+    gspc["date"] = pd.to_datetime(gspc["date"])
+    vix["date"] = pd.to_datetime(vix["date"])
 
-    market = market.sort_values(
-        ["series", "date"]
-    ).reset_index(drop=True)
+    gspc = gspc.sort_values("date").reset_index(drop=True)
+    vix = vix.sort_values("date").reset_index(drop=True)
 
-    gspc_rows = market["series"].eq("GSPC")
-
-    market.loc[gspc_rows, "market_daily_ret"] = (
-        market.loc[gspc_rows, "adj_close"]
-        .pct_change()
-        .to_numpy()
+    gspc["market_daily_ret"] = (
+        gspc["adj_close"]
+        .pct_change(fill_method=None)
     )
 
-    return market
+    return gspc, vix
 
 
-def add_market_features(monthly, market):
-    """Add monthly market return, market volatility, and VIX variables."""
-    market = market.copy()
-    market["month"] = market["date"].dt.to_period("M").dt.to_timestamp("M")
+# ---------------------------------------------------------------------
+# 6) Add monthly market and VIX variables
+# ---------------------------------------------------------------------
+def add_market_features(monthly, gspc, vix):
+    gspc = gspc.copy()
+    vix = vix.copy()
 
-    gspc = market[market["series"].eq("GSPC")]
-    vix = market[market["series"].eq("VIX")]
+    gspc["month"] = gspc["date"].dt.to_period("M").dt.to_timestamp("M")
+    vix["month"] = vix["date"].dt.to_period("M").dt.to_timestamp("M")
 
     market_monthly = (
         gspc.groupby("month", as_index=False)
@@ -229,11 +248,24 @@ def add_market_features(monthly, market):
             market_vol_1m=("market_daily_ret", "std"),
         )
         .sort_values("month")
+        .reset_index(drop=True)
     )
 
+    previous_market_month = market_monthly["month"].shift(1)
+    previous_market_price = market_monthly["gspc_last_adj_close"].shift(1)
+
     market_monthly["market_ret_1m"] = (
-        market_monthly["gspc_last_adj_close"].pct_change()
+        market_monthly["gspc_last_adj_close"]
+        / previous_market_price
+        - 1.0
     )
+
+    market_monthly.loc[
+        market_monthly["month"].ne(
+            previous_market_month + pd.offsets.MonthEnd(1)
+        ),
+        "market_ret_1m",
+    ] = np.nan
 
     vix_monthly = (
         vix.groupby("month", as_index=False)
@@ -242,11 +274,24 @@ def add_market_features(monthly, market):
             vix_avg_1m=("close", "mean"),
         )
         .sort_values("month")
+        .reset_index(drop=True)
     )
 
+    previous_vix_month = vix_monthly["month"].shift(1)
+    previous_vix_close = vix_monthly["vix_last_close"].shift(1)
+
     vix_monthly["vix_change_1m"] = (
-        vix_monthly["vix_last_close"].pct_change()
+        vix_monthly["vix_last_close"]
+        / previous_vix_close
+        - 1.0
     )
+
+    vix_monthly.loc[
+        vix_monthly["month"].ne(
+            previous_vix_month + pd.offsets.MonthEnd(1)
+        ),
+        "vix_change_1m",
+    ] = np.nan
 
     market_monthly = market_monthly[
         ["month", "market_ret_1m", "market_vol_1m"]
@@ -256,20 +301,27 @@ def add_market_features(monthly, market):
         ["month", "vix_avg_1m", "vix_change_1m"]
     ]
 
-    return (
-        monthly
-        .merge(market_monthly, on="month", how="left")
-        .merge(vix_monthly, on="month", how="left")
+    monthly = monthly.merge(
+        market_monthly,
+        on="month",
+        how="left",
     )
 
+    monthly = monthly.merge(
+        vix_monthly,
+        on="month",
+        how="left",
+    )
+
+    return monthly
+
+
 # ---------------------------------------------------------------------
-# 5) Add beta and idiosyncratic volatility
+# 7) Add beta and idiosyncratic volatility
 # ---------------------------------------------------------------------
-def add_beta_idiovol(monthly, daily, market):
-    """Create rolling market beta and idiosyncratic volatility."""
-    market_returns = market.loc[
-        market["series"].eq("GSPC"),
-        ["date", "market_daily_ret"],
+def add_beta_idiovol(monthly, daily, gspc):
+    market_returns = gspc[
+        ["date", "market_daily_ret"]
     ]
 
     returns = (
@@ -282,30 +334,56 @@ def add_beta_idiovol(monthly, daily, market):
     parts = []
 
     for _, group in returns.groupby("ticker", sort=False):
-        stock = group["stock_daily_ret"]
-        market_ret = group["market_daily_ret"]
+        stock_return = group["stock_daily_ret"]
+        market_return = group["market_daily_ret"]
 
-        market_var = market_ret.rolling(252, min_periods=126).var()
-        stock_var = stock.rolling(252, min_periods=126).var()
-        covariance = stock.rolling(252, min_periods=126).cov(market_ret)
+        market_variance = (
+            market_return
+            .rolling(252, min_periods=126)
+            .var()
+        )
 
-        beta = covariance / market_var
-        residual_var = stock_var - beta.pow(2) * market_var
+        stock_variance = (
+            stock_return
+            .rolling(252, min_periods=126)
+            .var()
+        )
+
+        covariance = (
+            stock_return
+            .rolling(252, min_periods=126)
+            .cov(market_return)
+        )
+
+        beta = covariance / market_variance
+
+        residual_variance = (
+            stock_variance
+            - beta.pow(2) * market_variance
+        )
 
         group = group.copy()
+
         group["beta_12m"] = beta.replace(
             [np.inf, -np.inf],
             np.nan,
         )
+
         group["betasq_12m"] = group["beta_12m"].pow(2)
+
         group["idiovol_12m"] = np.sqrt(
-            residual_var.clip(lower=0)
+            residual_variance.clip(lower=0)
         )
 
         parts.append(group)
 
     risk = pd.concat(parts, ignore_index=True)
-    risk["month"] = risk["date"].dt.to_period("M").dt.to_timestamp("M")
+
+    risk["month"] = (
+        risk["date"]
+        .dt.to_period("M")
+        .dt.to_timestamp("M")
+    )
 
     risk = (
         risk.groupby(["ticker", "month"], as_index=False)
@@ -324,17 +402,24 @@ def add_beta_idiovol(monthly, daily, market):
 
 
 # ---------------------------------------------------------------------
-# 6) Create the next-month excess-return target
+# 8) Load the monthly Fama-French risk-free rate
 # ---------------------------------------------------------------------
 def load_fama_french_rf():
-    """Load the permanent monthly risk-free rate."""
     rf = pd.read_csv(
         FAMA_FRENCH_RF_FILE,
         usecols=["month", "RF"],
     )
 
-    rf["month"] = pd.to_datetime(rf["month"])
-    rf["RF"] = pd.to_numeric(rf["RF"], errors="coerce")
+    rf["month"] = (
+        pd.to_datetime(rf["month"])
+        .dt.to_period("M")
+        .dt.to_timestamp("M")
+    )
+
+    rf["RF"] = pd.to_numeric(
+        rf["RF"],
+        errors="coerce",
+    )
 
     return (
         rf.dropna()
@@ -344,20 +429,35 @@ def load_fama_french_rf():
     )
 
 
+# ---------------------------------------------------------------------
+# 9) Create the next-month excess-return target
+# ---------------------------------------------------------------------
 def add_target(monthly, rf):
-    """Create next-month stock and excess returns."""
     data = monthly.sort_values(["ticker", "month"]).copy()
+    grouped = data.groupby("ticker")
+
+    next_month = grouped["month"].shift(-1)
+    next_return = grouped["ret_1m"].shift(-1)
+    expected_next_month = data["month"] + pd.offsets.MonthEnd(1)
+
+    valid_target = next_month.eq(expected_next_month)
 
     data["target_return_next_1m"] = (
-        data.groupby("ticker")["ret_1m"].shift(-1)
+        next_return.where(valid_target)
     )
 
-    future_rf = rf.copy()
-    future_rf["RF_next_1m"] = future_rf["RF"].shift(-1)
+    data["target_month"] = expected_next_month
+
+    future_rf = rf.rename(
+        columns={
+            "month": "target_month",
+            "RF": "RF_next_1m",
+        }
+    )
 
     data = data.merge(
-        future_rf[["month", "RF_next_1m"]],
-        on="month",
+        future_rf[["target_month", "RF_next_1m"]],
+        on="target_month",
         how="left",
     )
 
@@ -366,58 +466,90 @@ def add_target(monthly, rf):
         - data["RF_next_1m"]
     )
 
-    return data
+    gap_targets = int(
+        (next_month.notna() & ~valid_target).sum()
+    )
+
+    data = data.drop(columns="target_month")
+
+    return data, gap_targets
 
 
 # ---------------------------------------------------------------------
-# 7) Run pipeline
+# 10) Run the monthly-data pipeline
 # ---------------------------------------------------------------------
 def main():
-    """Build and save the monthly stock panel."""
-    daily = pd.read_csv(DAILY_CLEAN_FILE)
+    daily = pd.read_parquet(DAILY_CLEAN_FILE)
     daily["date"] = pd.to_datetime(daily["date"])
 
-    monthly, daily_features = build_monthly_panel(daily)
+    monthly, daily_features, gap_returns = build_monthly_panel(daily)
 
-    monthly, bad_tickers = remove_bad_monthly_tickers(monthly)
-
-    daily_features = daily_features[
-        ~daily_features["ticker"].isin(bad_tickers)
-    ].copy()
+    monthly, daily_features, fragmented_tickers = (
+        remove_fragmented_tickers(
+            monthly,
+            daily_features,
+        )
+    )
 
     monthly = add_stock_features(monthly)
 
-    market = load_market_data()
-    monthly = add_market_features(monthly, market)
+    gspc, vix = load_market_data()
+
+    monthly = add_market_features(
+        monthly,
+        gspc,
+        vix,
+    )
+
     monthly = add_beta_idiovol(
         monthly,
         daily_features,
-        market,
+        gspc,
     )
 
     rf = load_fama_french_rf()
-    monthly = add_target(monthly, rf)
-    monthly = monthly[
-        (monthly["month"] <= SAMPLE_END)
+    monthly, gap_targets = add_target(monthly, rf)
+
+    sample_start = pd.Timestamp(SAMPLE_START)
+    sample_end = pd.Timestamp(SAMPLE_END)
+
+    monthly = monthly.loc[
+        monthly["month"].between(sample_start, sample_end)
         & monthly[TARGET].notna()
     ].copy()
 
     monthly = (
-        monthly
-        .sort_values(["ticker", "month"])
+        monthly.sort_values(["ticker", "month"])
         .reset_index(drop=True)
     )
 
-    monthly.to_csv(MONTHLY_STOCK_FILE, index=False)
+    MONTHLY_STOCK_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    print(f"\nSaved: {MONTHLY_STOCK_FILE}")
-    print(f"Shape: {monthly.shape}")
-    print(f"Tickers: {monthly['ticker'].nunique()}")
+    monthly.to_parquet(
+        MONTHLY_STOCK_FILE,
+        index=False,
+    )
+
+    print("\nFinal summary")
+    print(f"Calendar gaps detected before ticker removal: {gap_returns}")
+    print(f"Fragmented ticker histories removed: {len(fragmented_tickers)}")
+
+    if fragmented_tickers:
+        print(f"Removed fragmented tickers: {', '.join(fragmented_tickers)}")
+
+    print(f"Calendar-gap targets blocked: {gap_targets}")
+    print(f"Final rows: {len(monthly):,}")
+    print(f"Final columns: {monthly.shape[1]}")
+    print(f"Final tickers: {monthly['ticker'].nunique()}")
     print(
         f"Date range: {monthly['month'].min()} "
         f"to {monthly['month'].max()}"
     )
     print(f"Missing targets: {monthly[TARGET].isna().sum():,}")
+    print(f"Saved: {MONTHLY_STOCK_FILE}")
 
 
 if __name__ == "__main__":

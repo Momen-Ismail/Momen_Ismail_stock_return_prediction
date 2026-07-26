@@ -5,3 +5,5 @@ statsmodels
 requests
 yfinance
 pyarrow
+matplotlib
+openpyxl

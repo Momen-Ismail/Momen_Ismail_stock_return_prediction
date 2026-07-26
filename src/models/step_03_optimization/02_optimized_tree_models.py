@@ -1,72 +1,94 @@
-"""Refit tree models with validation-selected hyperparameters."""
+"""Estimate optimized tree models on train and validation."""
 
 from pathlib import Path
 import sys
 
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR, TARGET  # noqa: E402
-from src.models.utils.data import load_model_data  # noqa: E402
-from src.models.utils.estimation import fit_models, load_best_parameters  # noqa: E402
+from src.models.utils.data import arrays, load_model_data  # noqa: E402
+from src.models.utils.estimation import load_best_parameters  # noqa: E402
+from src.models.utils.evaluation import evaluate_model  # noqa: E402
 
-TUNING_FILE = MODEL_OUTPUT_DIR / "tuning" / "tree_best_parameters.csv"
+TUNING_DIR = MODEL_OUTPUT_DIR / "tuning"
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "optimization"
 RANDOM_STATE = 42
 
 
-def optimized_models(parameters):
-    """Construct tree models from validation-selected parameters."""
-    tree = parameters["decision_tree"]
-    rf, gbrt = parameters["random_forest"], parameters["gbrt"]
+def optimized_models():
+    """Define tree models from the saved tuning results."""
+    tree = load_best_parameters(TUNING_DIR / "decision_tree_best_parameters.csv")
+    forest = load_best_parameters(TUNING_DIR / "random_forest_best_parameters.csv")
     return {
         "decision_tree_optimized": DecisionTreeRegressor(
-            max_depth=(
-                None if tree["max_depth"] is None else int(tree["max_depth"])
-            ),
+            max_depth=None if tree["max_depth"] is None else int(tree["max_depth"]),
             min_samples_leaf=int(tree["min_samples_leaf"]),
-            ccp_alpha=float(tree["ccp_alpha"]),
             random_state=RANDOM_STATE,
         ),
-        "rf_optimized": RandomForestRegressor(
-            n_estimators=int(rf["n_estimators"]),
-            max_depth=int(rf["max_depth"]),
-            max_features=rf["max_features"],
+        "random_forest_optimized": RandomForestRegressor(
+            n_estimators=int(forest["n_estimators"]),
+            max_depth=(
+                None
+                if forest["max_depth"] is None
+                else int(forest["max_depth"])
+            ),
+            min_samples_leaf=int(forest["min_samples_leaf"]),
+            max_features=forest["max_features"],
             n_jobs=-1,
             oob_score=True,
-            random_state=RANDOM_STATE,
-        ),
-        "gbrt_optimized": GradientBoostingRegressor(
-            n_estimators=int(gbrt["n_estimators"]),
-            max_depth=int(gbrt["max_depth"]),
-            learning_rate=float(gbrt["learning_rate"]),
             random_state=RANDOM_STATE,
         ),
     }
 
 
 def main():
-    samples, predictors = load_model_data()
-    parameters = load_best_parameters(
-        TUNING_FILE, ["decision_tree", "random_forest", "gbrt"]
-    )
-    metrics, predictions, importances = fit_models(
-        optimized_models(parameters),
-        samples,
-        predictors,
-        TARGET,
-        effect=("feature_importances_", "importance"),
-    )
+    samples, predictors = load_model_data(("train", "validation"))
+    model_arrays = arrays(samples, predictors)
+    X_train, y_train = model_arrays["train"]
+    train_mean = samples["train"][TARGET].mean()
+
+    all_metrics = []
+    all_predictions = []
+    all_importances = []
+
+    for name, model in optimized_models().items():
+        print(f"Estimating {name} ({len(predictors)} predictors)")
+        model.fit(X_train, y_train)
+
+        predictions = {
+            sample: model.predict(X).reshape(-1)
+            for sample, (X, _) in model_arrays.items()
+        }
+        metrics, prediction_frame = evaluate_model(
+            name, samples, predictions, TARGET, train_mean
+        )
+        if hasattr(model, "oob_score_"):
+            metrics["oob_r2_train"] = model.oob_score_
+
+        all_metrics.append(metrics)
+        all_predictions.append(prediction_frame)
+        all_importances.append(
+            pd.DataFrame({
+                "model": name,
+                "predictor": predictors,
+                "importance": model.feature_importances_,
+            }).sort_values("importance", ascending=False)
+        )
+        print(metrics.to_string(index=False))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    metrics.to_csv(OUTPUT_DIR / "optimized_tree_model_metrics.csv", index=False)
-    predictions.to_parquet(
+    pd.concat(all_metrics, ignore_index=True).to_csv(
+        OUTPUT_DIR / "optimized_tree_model_metrics.csv", index=False
+    )
+    pd.concat(all_predictions, ignore_index=True).to_parquet(
         OUTPUT_DIR / "optimized_tree_model_predictions.parquet", index=False
     )
-    importances.to_csv(
+    pd.concat(all_importances, ignore_index=True).to_csv(
         OUTPUT_DIR / "optimized_tree_model_feature_importance.csv", index=False
     )
 

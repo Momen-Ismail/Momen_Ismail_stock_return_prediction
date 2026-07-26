@@ -3,10 +3,11 @@
 The file combines:
 - stock characteristics;
 - market and VIX variables;
-- SIC2 industry dummies;
-- stock-characteristic × Welch-Goyal interactions.
+- one-month-lagged Welch-Goyal variables;
+- SIC2 industry dummies.
 
-Final cleaning and normalization are done in file 05.
+File 05 performs imputation, monthly winsorization,
+and interaction construction.
 """
 
 from pathlib import Path
@@ -17,7 +18,7 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     TARGET,
@@ -34,149 +35,367 @@ from src.feature_definitions import (  # noqa: E402
 )
 
 
+MAX_EXACT_MACRO_REPEAT_MONTHS = 12
+
+
 # ---------------------------------------------------------------------
-# 2) Add industry and macro variables
+# SIC2 industry dummies
 # ---------------------------------------------------------------------
 def add_industry_dummies(data):
-    """Create SIC2 industry dummies."""
-    sic2 = pd.get_dummies(
-        pd.to_numeric(data["sic2"], errors="coerce")
-        .fillna(-1)
-        .astype(int),
-        prefix="sic2",
-        dtype=int,
-    )
-
-    sic2 = sic2.rename(columns={"sic2_-1": "sic2_missing"})
-
-    return pd.concat([data, sic2], axis=1), sic2.columns.tolist()
-
-
-def add_welch_goyal_macro(data):
-    """Merge permanent Welch-Goyal monthly variables."""
-    macro = pd.read_csv(
-        WELCH_GOYAL_INPUT_FILE,
-        usecols=["month"] + LOCKED_MACRO_COLUMNS,
-    )
-
-    macro["month"] = pd.to_datetime(macro["month"])
-    macro = (
-        macro.dropna(subset=["month"])
-        .drop_duplicates("month")
-        .sort_values("month")
-    )
-
-    return data.merge(macro, on="month", how="left")
-
-
-# ---------------------------------------------------------------------
-# 3) Validate predictors and create interactions
-# ---------------------------------------------------------------------
-def validate_locked_columns(data, requested, label):
-    """Return locked columns or fail if the locked design is unavailable."""
-    missing = [name for name in requested if name not in data.columns]
-
-    if missing:
-        raise ValueError(f"Missing locked {label} columns: {missing}")
-
-    nonnumeric = [
-        name for name in requested
-        if not pd.api.types.is_numeric_dtype(data[name])
-    ]
-
-    if nonnumeric:
-        raise ValueError(f"Non-numeric locked {label} columns: {nonnumeric}")
-
-    empty = [name for name in requested if data[name].isna().all()]
-
-    if empty:
-        raise ValueError(f"Completely empty locked {label} columns: {empty}")
-
-    return list(requested)
-
-
-def add_interactions(data, characteristics):
-    """Create stock-characteristic × macro-state interactions."""
-    blocks = []
-
-    for macro in LOCKED_MACRO_COLUMNS:
-        macro_values = pd.to_numeric(
-            data[macro],
+    sic2 = (
+        pd.to_numeric(
+            data["sic2"],
             errors="coerce",
-        ).astype("float32")
-
-        block = pd.DataFrame(
-            {
-                f"{characteristic}_x_{macro}": (
-                    pd.to_numeric(
-                        data[characteristic],
-                        errors="coerce",
-                    ).astype("float32")
-                    * macro_values
-                )
-                for characteristic in characteristics
-            },
-            index=data.index,
         )
-
-        blocks.append(block)
-
-    interactions = (
-        pd.concat(blocks, axis=1)
-        .replace([np.inf, -np.inf], np.nan)
+        .fillna(-1)
+        .astype(int)
     )
 
-    return (
-        pd.concat([data, interactions], axis=1),
-        interactions.columns.tolist(),
+    dummies = pd.get_dummies(
+        sic2,
+        prefix="sic2",
+        dtype=np.int8,
+    ).rename(
+        columns={
+            "sic2_-1": "sic2_missing",
+        }
     )
+
+    data = pd.concat(
+        [
+            data.reset_index(drop=True),
+            dummies.reset_index(drop=True),
+        ],
+        axis=1,
+    )
+
+    return data, dummies.columns.tolist()
 
 
 # ---------------------------------------------------------------------
-# 4) Save the raw model dataset
+# Find longest consecutive run of an unchanged value
 # ---------------------------------------------------------------------
-def prepare_model_data(
-    data,
-    characteristics,
-    market_columns,
-    interactions,
-    sic2_dummies,
-):
-    """Save the raw predictor panel and predictor list."""
-    predictors = (
-        characteristics
-        + market_columns
-        + interactions
-        + sic2_dummies
+def longest_constant_run(data, variable):
+    changed = data[variable].ne(
+        data[variable].shift(1)
     )
 
-    predictors = list(dict.fromkeys(predictors))
-    expected_interactions = len(characteristics) * len(LOCKED_MACRO_COLUMNS)
+    block = changed.cumsum()
 
-    if len(interactions) != expected_interactions:
-        raise ValueError(
-            "Unexpected interaction count: "
-            f"created {len(interactions)}, expected {expected_interactions}"
+    runs = (
+        data.assign(block=block)
+        .groupby("block")
+        .agg(
+            start_month=("source_month", "min"),
+            end_month=("source_month", "max"),
+            value=(variable, "first"),
+            months=(variable, "size"),
         )
-
-    full = (
-        data[["ticker", "month", TARGET] + predictors]
-        .sort_values(["ticker", "month"])
+        .sort_values(
+            "months",
+            ascending=False,
+        )
         .reset_index(drop=True)
     )
 
-    duplicates = int(
-        full.duplicated(["ticker", "month"]).sum()
+    return runs.iloc[0]
+
+
+# ---------------------------------------------------------------------
+# Load and validate Welch-Goyal data
+# ---------------------------------------------------------------------
+def load_welch_goyal():
+    macro_columns = list(
+        LOCKED_MACRO_COLUMNS
     )
 
-    if duplicates:
+    macro = pd.read_csv(
+        WELCH_GOYAL_INPUT_FILE,
+        usecols=["month"] + macro_columns,
+    )
+
+    macro["source_month"] = (
+        pd.to_datetime(
+            macro["month"],
+            errors="coerce",
+        )
+        .dt.to_period("M")
+        .dt.to_timestamp("M")
+    )
+
+    if macro["source_month"].isna().any():
         raise ValueError(
-            f"Duplicate ticker-month rows found: {duplicates}"
+            "Invalid month values in the Welch-Goyal file."
         )
 
-    missing_targets = int(full[TARGET].isna().sum())
+    if macro["source_month"].duplicated().any():
+        raise ValueError(
+            "Duplicate months in the Welch-Goyal file."
+        )
 
-    full.to_csv(RAW_KELLY_FILE, index=False)
+    for name in macro_columns:
+        macro[name] = pd.to_numeric(
+            macro[name],
+            errors="coerce",
+        )
+
+    macro[macro_columns] = (
+        macro[macro_columns]
+        .replace(
+            [np.inf, -np.inf],
+            np.nan,
+        )
+    )
+
+    macro = (
+        macro.sort_values("source_month")
+        .reset_index(drop=True)
+    )
+
+    expected_months = pd.date_range(
+        start=macro["source_month"].min(),
+        end=macro["source_month"].max(),
+        freq="ME",
+    )
+
+    if not macro["source_month"].equals(
+        pd.Series(expected_months)
+    ):
+        raise ValueError(
+            "The Welch-Goyal file does not contain "
+            "a continuous monthly sequence."
+        )
+
+    missing_by_variable = (
+        macro[macro_columns]
+        .isna()
+        .sum()
+    )
+
+    missing_by_variable = (
+        missing_by_variable[
+            missing_by_variable.gt(0)
+        ]
+    )
+
+    if not missing_by_variable.empty:
+        raise ValueError(
+            "Missing Welch-Goyal values:\n"
+            f"{missing_by_variable.to_string()}"
+        )
+
+    # Dividend-price and earnings-price ratios should vary monthly.
+    for name in ["wg_dp", "wg_ep"]:
+        longest_run = longest_constant_run(
+            macro,
+            name,
+        )
+
+        if (
+            longest_run["months"]
+            > MAX_EXACT_MACRO_REPEAT_MONTHS
+        ):
+            raise ValueError(
+                f"{name} is unchanged for "
+                f"{int(longest_run['months'])} consecutive months: "
+                f"{longest_run['start_month'].date()} to "
+                f"{longest_run['end_month'].date()}. "
+                "Correct WELCH_GOYAL_INPUT_FILE before continuing."
+            )
+
+    return macro[
+        ["source_month"] + macro_columns
+    ]
+
+
+# ---------------------------------------------------------------------
+# Add one-month-lagged Welch-Goyal variables
+# ---------------------------------------------------------------------
+def add_welch_goyal_macro(data):
+    macro_columns = list(
+        LOCKED_MACRO_COLUMNS
+    )
+
+    macro = load_welch_goyal()
+
+    macro["month"] = (
+        macro["source_month"]
+        + pd.offsets.MonthEnd(1)
+    )
+
+    macro = macro[
+        ["month"] + macro_columns
+    ]
+
+    merged = data.merge(
+        macro,
+        on="month",
+        how="left",
+        validate="many_to_one",
+    )
+
+    first_month = merged["month"].min()
+
+    unexpected_missing = (
+        merged["month"].gt(first_month)
+        & merged[macro_columns]
+        .isna()
+        .any(axis=1)
+    )
+
+    if unexpected_missing.any():
+        affected_months = (
+            merged.loc[
+                unexpected_missing,
+                "month",
+            ]
+            .dt.strftime("%Y-%m-%d")
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+
+        raise ValueError(
+            "Missing lagged Welch-Goyal values for: "
+            f"{affected_months}"
+        )
+
+    return merged
+
+
+# ---------------------------------------------------------------------
+# Confirm required columns
+# ---------------------------------------------------------------------
+def validate_columns(data, columns, label):
+    columns = list(columns)
+
+    missing = [
+        name
+        for name in columns
+        if name not in data.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            f"Missing {label} columns: {missing}"
+        )
+
+    return columns
+
+
+# ---------------------------------------------------------------------
+# Select and save raw predictor dataset
+# ---------------------------------------------------------------------
+def prepare_raw_data(
+    data,
+    characteristics,
+    market_variables,
+    macro_variables,
+    sic2_dummies,
+):
+    predictors = (
+        characteristics
+        + market_variables
+        + macro_variables
+        + sic2_dummies
+    )
+
+    if len(predictors) != len(set(predictors)):
+        duplicated = sorted(
+            name
+            for name in set(predictors)
+            if predictors.count(name) > 1
+        )
+
+        raise ValueError(
+            "Duplicated predictors: "
+            f"{duplicated}"
+        )
+
+    full = (
+        data[
+            ["ticker", "month", TARGET]
+            + predictors
+        ]
+        .sort_values(
+            ["ticker", "month"]
+        )
+        .reset_index(drop=True)
+    )
+
+    duplicate_rows = int(
+        full.duplicated(
+            ["ticker", "month"]
+        ).sum()
+    )
+
+    missing_targets = int(
+        full[TARGET].isna().sum()
+    )
+
+    infinite_values = int(
+        np.isinf(
+            full.select_dtypes(
+                include=np.number
+            )
+            .to_numpy(dtype=np.float64)
+        ).sum()
+    )
+
+    if duplicate_rows:
+        raise ValueError(
+            "Duplicate ticker-month observations: "
+            f"{duplicate_rows}"
+        )
+
+    if missing_targets:
+        raise ValueError(
+            f"Missing targets: {missing_targets}"
+        )
+
+    if infinite_values:
+        raise ValueError(
+            "Infinite numeric values: "
+            f"{infinite_values}"
+        )
+
+    macro_any_missing = (
+        full[macro_variables]
+        .isna()
+        .any(axis=1)
+    )
+
+    macro_all_missing = (
+        full[macro_variables]
+        .isna()
+        .all(axis=1)
+    )
+
+    macro_missing_months = (
+        full.loc[
+            macro_any_missing,
+            "month",
+        ]
+        .dt.strftime("%Y-%m-%d")
+        .drop_duplicates()
+        .sort_values()
+        .tolist()
+    )
+
+    for output_file in [
+        RAW_KELLY_FILE,
+        RAW_PREDICTOR_FILE,
+        RAW_KELLY_SUMMARY_FILE,
+    ]:
+        output_file.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+    full.to_parquet(
+        RAW_KELLY_FILE,
+        index=False,
+    )
 
     pd.DataFrame(
         {"predictor": predictors}
@@ -190,15 +409,33 @@ def prepare_model_data(
         "raw_columns": full.shape[1],
         "raw_predictors": len(predictors),
         "stock_characteristics": len(characteristics),
-        "market_variables": len(market_columns),
-        "macro_variables": len(LOCKED_MACRO_COLUMNS),
-        "interactions": len(interactions),
-        "expected_interactions": expected_interactions,
+        "market_variables": len(market_variables),
+        "macro_variables": len(macro_variables),
         "sic2_dummies": len(sic2_dummies),
+        "rows_without_compustat": int(
+            full["has_compustat_annual"]
+            .eq(0)
+            .sum()
+        ),
+        "rows_with_any_macro_missing": int(
+            macro_any_missing.sum()
+        ),
+        "rows_with_all_macro_missing": int(
+            macro_all_missing.sum()
+        ),
+        "macro_missing_months": (
+            ", ".join(macro_missing_months)
+            if macro_missing_months
+            else "none"
+        ),
+        "infinite_numeric_values": infinite_values,
         "missing_targets": missing_targets,
-        "duplicate_ticker_months": duplicates,
+        "duplicate_ticker_months": duplicate_rows,
         "first_month": full["month"].min(),
         "last_month": full["month"].max(),
+        "interactions": (
+            "constructed_in_file_05"
+        ),
     }
 
     pd.DataFrame(
@@ -213,16 +450,22 @@ def prepare_model_data(
 
 
 # ---------------------------------------------------------------------
-# 5) Run pipeline
+# Main
 # ---------------------------------------------------------------------
 def main():
-    """Build and save the raw Kelly-style dataset."""
-    data = pd.read_csv(
-        PANEL_WITH_FUNDAMENTALS_FILE,
-        low_memory=False,
+    data = pd.read_parquet(
+        PANEL_WITH_FUNDAMENTALS_FILE
     )
 
-    data["month"] = pd.to_datetime(data["month"])
+    data["month"] = (
+        pd.to_datetime(
+            data["month"],
+            errors="coerce",
+        )
+        .dt.to_period("M")
+        .dt.to_timestamp("M")
+    )
+
     data["ticker"] = (
         data["ticker"]
         .astype(str)
@@ -230,64 +473,97 @@ def main():
         .str.strip()
     )
 
-    data, sic2_dummies = add_industry_dummies(data)
+    data, sic2_dummies = (
+        add_industry_dummies(data)
+    )
+
     data = add_welch_goyal_macro(data)
 
-    characteristics = validate_locked_columns(
+    characteristics = validate_columns(
         data,
         LOCKED_CHARACTERISTIC_COLUMNS,
         "stock-characteristic",
     )
 
-    market_columns = validate_locked_columns(
+    market_variables = validate_columns(
         data,
         LOCKED_MARKET_COLUMNS,
         "market",
     )
 
-    validate_locked_columns(
+    macro_variables = validate_columns(
         data,
         LOCKED_MACRO_COLUMNS,
         "macro",
     )
 
-    data, interactions = add_interactions(
-        data,
-        characteristics,
-    )
-
-    full, predictors, summary = prepare_model_data(
+    full, predictors, summary = prepare_raw_data(
         data=data,
         characteristics=characteristics,
-        market_columns=market_columns,
-        interactions=interactions,
+        market_variables=market_variables,
+        macro_variables=macro_variables,
         sic2_dummies=sic2_dummies,
     )
 
-    print(f"Saved: {RAW_KELLY_FILE}")
-    print(f"Shape: {full.shape}")
-    print(f"Predictors: {len(predictors)}")
+    print("\nFinal summary")
+    print(f"Rows: {len(full):,}")
+    print(f"Columns: {full.shape[1]:,}")
     print(
-        f"Stock characteristics: "
+        f"Tickers: "
+        f"{full['ticker'].nunique():,}"
+    )
+    print(
+        f"Predictors: "
+        f"{len(predictors):,}"
+    )
+    print(
+        "Stock characteristics: "
         f"{summary['stock_characteristics']}"
     )
     print(
-        f"Market variables: "
+        "Market variables: "
         f"{summary['market_variables']}"
     )
-    print(f"Macro variables: {summary['macro_variables']}")
-    print(f"Interactions: {summary['interactions']}")
-    print(f"Expected interactions: {summary['expected_interactions']}")
-    print(f"SIC2 dummies: {summary['sic2_dummies']}")
-    print(f"Missing targets: {summary['missing_targets']}")
     print(
-        f"Duplicate ticker-months: "
-        f"{summary['duplicate_ticker_months']}"
+        "Macro variables: "
+        f"{summary['macro_variables']}"
     )
     print(
-        f"Date range: {full['month'].min()} "
-        f"to {full['month'].max()}"
+        "SIC2 dummies: "
+        f"{summary['sic2_dummies']}"
     )
+    print(
+        "Rows without Compustat: "
+        f"{summary['rows_without_compustat']:,}"
+    )
+    print(
+        "Rows with macro missing: "
+        f"{summary['rows_with_any_macro_missing']:,}"
+    )
+    print(
+        "Macro-missing months: "
+        f"{summary['macro_missing_months']}"
+    )
+    print(
+        "Missing targets: "
+        f"{summary['missing_targets']:,}"
+    )
+    print(
+        "Infinite values: "
+        f"{summary['infinite_numeric_values']:,}"
+    )
+    print(
+        "Duplicate ticker-months: "
+        f"{summary['duplicate_ticker_months']:,}"
+    )
+    print(
+        f"Date range: "
+        f"{full['month'].min()} to "
+        f"{full['month'].max()}"
+    )
+    print(f"Saved: {RAW_KELLY_FILE}")
+    print(f"Saved: {RAW_PREDICTOR_FILE}")
+    print(f"Saved: {RAW_KELLY_SUMMARY_FILE}")
 
 
 if __name__ == "__main__":

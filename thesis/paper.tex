@@ -1,0 +1,1075 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+% Typography and page layout
+% ============================================================
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,top=2.2cm,bottom=2.3cm,left=2.35cm,right=2.35cm]{geometry}
+\usepackage{microtype}
+\usepackage{setspace}
+\setstretch{1.10}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\setlength{\emergencystretch}{2em}
+
+% ============================================================
+% Mathematics, tables and figures
+% ============================================================
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{csvsimple}
+\usepackage{siunitx}
+\usepackage{xstring}
+
+
+\sisetup{
+  round-mode=places,
+  round-precision=4,
+  detect-all,
+  group-digits=false,
+  table-number-alignment=center,
+  input-symbols = {-,+}
+}
+
+\usepackage{enumitem}
+\setlist[itemize]{
+  leftmargin=1.4em,
+  itemsep=0.15em,
+  topsep=0.25em
+}
+
+% ============================================================
+% Captions, colors and hyperlinks
+% ============================================================
+
+\usepackage{xcolor}
+\definecolor{linkblue}{RGB}{28,72,122}
+\definecolor{lightgray}{RGB}{245,246,248}
+\definecolor{midgray}{RGB}{90,90,90}
+
+\usepackage[
+  font=small,
+  labelfont=bf,
+  justification=centering,
+  singlelinecheck=false,
+  skip=6pt
+]{caption}
+
+\usepackage[
+  colorlinks=true,
+  linkcolor=linkblue,
+  citecolor=linkblue,
+  urlcolor=linkblue,
+  pdfauthor={Momen Ismail},
+  pdftitle={Machine Learning for Cross-Sectional Stock Return Prediction}
+]{hyperref}
+
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+% ============================================================
+% Bibliography
+% ============================================================
+
+\usepackage{csquotes}
+\usepackage[
+  backend=biber,
+  style=authoryear,
+  maxcitenames=2,
+  giveninits=true,
+  uniquename=init,
+  doi=false,
+  url=false,
+  isbn=false
+]{biblatex}
+
+\addbibresource{references.bib}
+
+% ============================================================
+% Header and footer
+% ============================================================
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Machine Learning for Finance}
+\fancyhead[R]{Momen Ismail}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\headheight}{14pt}
+
+% ============================================================
+% Section formatting
+% ============================================================
+
+\usepackage{titlesec}
+
+\titleformat{\section}
+  {\large\bfseries}
+  {\thesection}
+  {0.65em}
+  {}
+
+\titleformat{\subsection}
+  {\normalsize\bfseries}
+  {\thesubsection}
+  {0.60em}
+  {}
+
+\titlespacing*{\section}{0pt}{1.4em}{0.45em}
+\titlespacing*{\subsection}{0pt}{1.0em}{0.25em}
+
+\setcounter{secnumdepth}{2}
+
+% ============================================================
+% Paths to existing project outputs
+% ============================================================
+
+\newcommand{\ResultsPath}{../output/models/interpretation}
+\newcommand{\FigurePath}{../output/models/interpretation/figures}
+
+% ============================================================
+% Helper commands
+% ============================================================
+
+\ExplSyntaxOn
+
+\NewDocumentCommand{\CSVNumber}{m}
+ {
+  \tl_if_blank:eTF {#1}
+   {--}
+   {\exp_args:Ne \num {#1}}
+ }
+
+\NewDocumentCommand{\ModelName}{m}
+ {
+  \exp_args:Ne \str_case:nnF {#1}
+   {
+    {historical_mean}{Historical~Mean}
+    {ols_3}{OLS-3}
+    {pls}{PLS}
+    {elastic_net}{Elastic~Net}
+    {decision_tree}{Decision~Tree}
+    {random_forest}{Random~Forest}
+   }
+   {\texttt{\tl_to_str:n {#1}}}
+ }
+
+\NewDocumentCommand{\FamilyName}{m}
+ {
+  \exp_args:Ne \str_case:nnF {#1}
+   {
+    {random_forest}{Random~Forest}
+    {elastic_net}{Elastic~Net}
+    {decision_tree}{Decision~Tree}
+    {pls}{PLS}
+   }
+   {\texttt{\tl_to_str:n {#1}}}
+ }
+
+\ExplSyntaxOff
+
+\newcommand{\papertitle}
+  {Machine Learning for Cross-Sectional Stock Return Prediction}
+
+% ============================================================
+% Document
+% ============================================================
+
+\begin{document}
+
+% ============================================================
+% Compact title block
+% ============================================================
+
+\begin{center}
+  {\LARGE\bfseries \papertitle\par}
+
+  \vspace{0.35em}
+
+  {\large\bfseries Preliminary Project Report\par}
+
+  \vspace{0.7em}
+
+  {\large Momen Ismail\par}
+
+  \vspace{0.25em}
+
+  {Machine Learning for Finance, University of Bonn\par}
+
+  {Instructor: Ivan Gufler\par}
+
+  \vspace{0.35em}
+
+  {\today\par}
+\end{center}
+
+\vspace{0.6em}
+\hrule
+\vspace{0.8em}
+
+% ============================================================
+% Abstract
+% ============================================================
+
+\begin{abstract}
+\noindent
+This paper compares linear, regularized, dimension-reduction and tree-based
+methods for predicting next-month stock excess returns. The models are
+evaluated using a chronological design that separates model selection from a
+2020--2025 test period. Partial Least Squares produces the lowest preliminary
+test-period mean squared error and an out-of-sample \(R^2\) of approximately
+\(0.18\%\). Random Forest and a parsimonious three-variable OLS model also
+slightly outperform the historical-mean benchmark. Elastic Net selects no
+nonzero coefficients and effectively reproduces the benchmark, while the
+single Decision Tree performs substantially worse. The results illustrate
+that machine-learning flexibility does not automatically translate into
+reliable stock-return forecasts and that small improvements must be interpreted
+cautiously. These estimates are preliminary: a project audit identified target
+continuity, macro-timing and workflow-documentation issues that will be
+corrected before a complete clean rebuild.
+\end{abstract}
+
+\vspace{0.4em}
+
+\noindent
+\textbf{Keywords:}
+stock returns, machine learning, Partial Least Squares, Random Forest,
+out-of-sample prediction
+
+% ============================================================
+% 1. Introduction
+% ============================================================
+
+\section{Introduction}
+\label{sec:introduction}
+
+Expected stock returns are central to asset pricing, portfolio allocation and
+risk management. Predicting them is nevertheless difficult because realized
+monthly returns contain substantial idiosyncratic variation and because
+predictive relationships may change across market regimes. A model that fits
+historical observations well may therefore perform poorly when applied to
+future data.
+
+Machine-learning methods are potentially attractive in this setting because
+they can process many correlated predictors, impose regularization and capture
+nonlinearities or interactions. At the same time, their flexibility increases
+the risk of overfitting. A meaningful evaluation must consequently be based on
+genuinely out-of-sample observations and must compare complex models with a
+simple benchmark.
+
+This paper asks:
+
+\begin{quote}
+\emph{Can linear dimension-reduction, regularized regression and tree-based
+methods improve next-month stock excess-return forecasts relative to a
+historical-mean benchmark?}
+\end{quote}
+
+The study compares six approaches under a common information set and evaluation
+framework: the historical mean, OLS with three economically motivated
+predictors, Partial Least Squares, Elastic Net, a Decision Tree and a Random
+Forest. Model selection is performed chronologically, while 2020--2025 is
+used as the preliminary test period in the current implementation.
+
+The study is related to the predictive asset-pricing literature, particularly
+the use of high-dimensional firm characteristics in
+\textcite{gu2020empirical}. It also follows the benchmark-oriented perspective
+of \textcite{welch2008comprehensive}, who show that apparently sophisticated
+return-prediction models often struggle to outperform simple historical
+forecasts.
+
+The contribution is not the introduction of a new algorithm. Instead, the
+paper provides a transparent and reproducible comparison of models with
+different levels of flexibility. It places particular emphasis on negative
+findings, model instability and the distinction between statistical ranking
+and economically meaningful predictability.
+
+This document is a preliminary project report. It describes the current
+implementation and reports its existing outputs transparently, but it does not
+present them as final empirical evidence. The project audit identified a small
+number of consequential timing and workflow issues. These are documented below
+and will be corrected before the output directory is deleted and the entire
+project is rebuilt from the permanent inputs.
+
+% ============================================================
+% 2. Data
+% ============================================================
+
+\section{Data}
+\label{sec:data}
+
+\subsection{Sources and observation unit}
+
+The observation unit is a stock-month. The stock universe is based on a locked
+current-and-historical S\&P 500-style ticker list. Daily price and volume
+information comes from Yahoo Finance. Market index and VIX series are used to
+construct aggregate market and volatility variables. Monthly Fama--French data
+provide the risk-free rate used to calculate excess returns. Annual Compustat
+data supply accounting characteristics and industry classifications.
+Welch--Goyal variables provide aggregate predictive states.
+
+Daily price histories begin before the modeling period so that long-window
+characteristics can be constructed. The current monthly modeling sample begins in
+January 1990. The held-out test period covers January 2020 through December
+2025.
+
+For stock \(i\) at month \(t\), the intended target is the excess return in the
+immediately following calendar month:
+
+\begin{equation}
+ y_{i,t+1}
+ =
+ r_{i,t+1}-RF_{t+1},
+ \label{eq:target}
+\end{equation}
+
+where \(r_{i,t+1}\) is the stock return and \(RF_{t+1}\) is the one-month
+risk-free rate.
+
+\subsection{Timing and preprocessing}
+
+Predictors are constructed using information available by the end of month
+\(t\). Momentum measures exclude the return being predicted. Annual Compustat
+observations are made available six months after fiscal year-end and are merged
+backward to the most recent report available for each ticker-month. This
+conservative lag reduces, but cannot fully eliminate, the risk of look-ahead
+bias because exact filing dates are unavailable.
+
+The project audit confirms that stock-level feature construction and the
+six-month Compustat availability rule are largely chronological. It also finds
+two timing issues that must be corrected before final estimation. First, the
+current ticker-level lead operation generally constructs the intended target,
+but in 26 retained observations the next available ticker observation is not
+the immediately following calendar month. These nonconsecutive transitions
+will be removed. Second, the Welch--Goyal macro variables are currently merged
+in the same month. An explicit one-month availability lag will be imposed so
+that the final rebuild uses only macro information available at the forecast
+date.
+
+Missing predictor observations are replaced using the contemporaneous
+cross-sectional median. If an entire predictor is missing within one month, the
+remaining values are filled with zero. Predictors are then converted to
+within-month cross-sectional ranks on the interval \([-1,1]\):
+
+\begin{equation}
+ x^{\mathrm{rank}}_{i,t}
+ =
+ 2
+ \frac{\operatorname{rank}(x_{i,t})-1}
+      {N_t-1}
+ -1.
+ \label{eq:rank-transform}
+\end{equation}
+
+This transformation reduces sensitivity to units and extreme predictor values
+while preserving the relative ordering of firms within each month.
+
+\subsection{Predictor set}
+
+The current design contains 499 predictors. The base variables represent major
+economic groups:
+
+\begin{itemize}
+  \item size, valuation, profitability, investment and leverage;
+  \item momentum, reversals and price trends;
+  \item volatility, downside risk, beta and idiosyncratic volatility;
+  \item liquidity and trading activity;
+  \item industry indicators;
+  \item market, VIX and Welch--Goyal aggregate states;
+  \item interactions between firm characteristics and aggregate states.
+\end{itemize}
+
+The resulting panel is high-dimensional and highly correlated. This provides
+the motivation for regularization, dimension reduction and nonlinear methods.
+
+\subsection{Chronological sample design}
+
+The data are divided chronologically:
+
+\begin{itemize}
+  \item training period: 1990--2014;
+  \item validation period: 2015--2019;
+  \item preliminary test period: 2020--2025.
+\end{itemize}
+
+Hyperparameters are selected using annual expanding-window folds within the
+training period. Fixed and optimized specifications are compared using the
+validation period. Once the specifications are selected, the training and
+validation observations are combined into a development sample, each model is
+refitted once and evaluated on the preliminary test period. The project audit
+also identified inconsistencies between the written description of the tuning
+periods and selection rule and their implementation. The exact chronology and
+selection rule will therefore be reconciled and documented before the clean
+rebuild.
+
+Random cross-validation is not used because it would allow future market
+observations to influence earlier forecasts. The chronological design more
+closely represents the information available to an investor in real time.
+
+% ============================================================
+% 3. Methodology
+% ============================================================
+
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Forecasting models}
+
+The general forecasting problem is
+
+\begin{equation}
+ y_{i,t+1}
+ =
+ f(\mathbf{x}_{i,t})
+ +
+ \varepsilon_{i,t+1},
+ \label{eq:forecast}
+\end{equation}
+
+where the function \(f(\cdot)\) differs across models.
+
+\textbf{Historical Mean.}
+The benchmark predicts the mean target observed in the permitted estimation
+sample. It ignores firm characteristics and represents the performance of a
+simple constant forecast.
+
+\textbf{OLS-3.}
+The parsimonious OLS specification uses size, book-to-market and 12-month
+momentum. These variables offer an interpretable reference between the
+constant benchmark and the high-dimensional models.
+
+\textbf{Partial Least Squares.}
+PLS constructs supervised latent components from the 499 predictors. Unlike
+unsupervised dimension reduction, the components are chosen to be related to
+the target. PLS is particularly relevant when predictors are numerous and
+strongly correlated \parencite{wold1984collinearity}.
+
+\textbf{Elastic Net.}
+Elastic Net combines \(L_1\) and \(L_2\) regularization:
+
+\begin{equation}
+ \widehat{\boldsymbol{\beta}}
+ =
+ \arg\min_{\boldsymbol{\beta}}
+ \left[
+ \frac{1}{2n}
+ \left\|
+ \mathbf{y}-\mathbf{X}\boldsymbol{\beta}
+ \right\|_2^2
+ +
+ \alpha
+ \left(
+ \rho\|\boldsymbol{\beta}\|_1
+ +
+ \frac{1-\rho}{2}
+ \|\boldsymbol{\beta}\|_2^2
+ \right)
+ \right].
+ \label{eq:elastic-net}
+\end{equation}
+
+The \(L_1\) component permits variable selection, while the \(L_2\) component
+stabilizes estimates when predictors are correlated
+\parencite{tibshirani1996regression,zou2005regularization}.
+
+\textbf{Decision Tree.}
+A regression tree recursively divides the predictor space and assigns a
+constant prediction to each terminal leaf. It can represent threshold effects
+and interactions but is sensitive to changes in the estimation sample.
+
+\textbf{Random Forest.}
+Random Forest averages predictions across bootstrap trees and considers a
+random subset of predictors at each split \parencite{breiman2001random}.
+Averaging is intended to reduce the variance of an individual tree while
+preserving nonlinear predictive relationships.
+
+\subsection{Evaluation metrics}
+
+The primary criterion is monthly mean squared error:
+
+\begin{equation}
+ \operatorname{MSE}_{\mathrm{month}}
+ =
+ \frac{1}{T}
+ \sum_{t=1}^{T}
+ \left[
+ \frac{1}{N_t}
+ \sum_{i=1}^{N_t}
+ \left(
+ y_{i,t+1}
+ -
+ \widehat{y}_{i,t+1}
+ \right)^2
+ \right].
+ \label{eq:monthly-mse}
+\end{equation}
+
+Errors are first averaged across firms and then across months, preventing months
+with more observations from receiving greater weight.
+
+The report also presents RMSE, MAE, prediction-target correlation and
+out-of-sample \(R^2\):
+
+\begin{equation}
+ R^2_{\mathrm{OOS}}
+ =
+ 1
+ -
+ \frac{
+   \sum_{i,t}
+   (y_{i,t+1}-\widehat y_{i,t+1})^2
+ }{
+   \sum_{i,t}
+   (y_{i,t+1}-\widehat y^{\mathrm{HM}}_{i,t+1})^2
+ }.
+ \label{eq:oos-r2}
+\end{equation}
+
+A positive value means that the model reduces squared forecast error relative
+to the historical mean. A negative value means that the model performs worse
+than the benchmark.
+
+% ============================================================
+% 4. Results
+% ============================================================
+
+\section{Preliminary Results}
+\label{sec:results}
+
+\subsection{Overall predictive performance}
+
+\begin{table}[H]
+  \centering
+  \caption{Preliminary test-period performance, 2020--2025}
+  \label{tab:final-results}
+
+  \small
+  \setlength{\tabcolsep}{5.5pt}
+
+  \begin{tabular}{
+    c
+    l
+    S[table-format=1.5]
+    S[table-format=1.5]
+    S[table-format=1.5]
+    S[table-format=-1.5]
+    S[table-format=-1.5]
+  }
+    \toprule
+    {Rank}
+    & {Model}
+    & {MSE}
+    & {RMSE}
+    & {MAE}
+    & {\(R^2_{\mathrm{OOS}}\)}
+    & {Correlation} \\
+    \midrule
+
+    \csvreader[
+      head to column names,
+      late after line=\\
+    ]{\ResultsPath/final_prediction_results.csv}{
+      rank=\Rank,
+      model=\Model,
+      monthly_mse=\MonthlyMSE,
+      rmse=\RMSE,
+      mae=\MAE,
+      oos_r2=\OOSR,
+      correlation=\Correlation
+    }{
+      \Rank
+      & \ModelName{\Model}
+      & \CSVNumber{\MonthlyMSE}
+      & \CSVNumber{\RMSE}
+      & \CSVNumber{\MAE}
+      & \CSVNumber{\OOSR}
+      & \CSVNumber{\Correlation}
+    }
+
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.35em}
+
+  \begin{minipage}{0.92\textwidth}
+    \footnotesize
+    \textit{Notes:}
+    Models are ranked by monthly MSE. Correlation is undefined for constant or
+    near-constant predictions. Positive \(R^2_{\mathrm{OOS}}\) indicates an
+    improvement over the historical-mean benchmark.
+  \end{minipage}
+\end{table}
+
+PLS provides the lowest monthly MSE and the highest out-of-sample \(R^2\).
+Its \(R^2_{\mathrm{OOS}}\) of \(0.00179\) means that it reduces squared forecast
+error by approximately \(0.18\%\) relative to the historical mean. The result
+is positive, but economically small.
+
+Random Forest ranks second with an out-of-sample \(R^2\) of approximately
+\(0.058\%\). OLS-3 ranks third with approximately \(0.049\%\). The difference
+between these two models is minimal, indicating that the large increase in
+model complexity delivered by Random Forest produces only a small additional
+reduction in squared error relative to the parsimonious OLS specification.
+
+Elastic Net and the historical mean produce almost identical results. The
+optimized Elastic Net contains no coefficients above the specified tolerance
+and therefore behaves as a constant predictor. This is a meaningful negative
+finding: after chronological validation, the regularized model found no
+sufficiently stable incremental signal among the 499 predictors.
+
+The Decision Tree performs considerably worse than all other models. Its
+out-of-sample \(R^2\) is approximately \(-13.3\%\), and its prediction-target
+correlation is negative. The individual tree appears to fit unstable splits
+that do not generalize to the test sample.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.86\textwidth,
+    trim=5 5 5 22,
+    clip
+  ]{\FigurePath/test_oos_r2_by_model.png}
+
+  \caption{Preliminary test-period out-of-sample \(R^2\) by model}
+  \label{fig:test-oos-r2}
+\end{figure}
+
+\Cref{fig:test-oos-r2} emphasizes both the ranking and the limited absolute
+predictive power. PLS, Random Forest and OLS-3 outperform the benchmark, but all
+positive values remain close to zero. The Decision Tree is qualitatively
+different because its additional flexibility substantially increases forecast
+error.
+
+The MAE ranking differs slightly from the MSE ranking. The historical mean and
+Elastic Net have the lowest MAE, while PLS has the lowest MSE. This suggests
+that PLS reduces some relatively large forecast errors, which receive more
+weight under squared loss, without reducing the typical absolute error.
+
+\subsection{Financial interpretation}
+
+The small positive out-of-sample \(R^2\) values represent small reductions in
+forecast error relative to the historical-mean benchmark. They provide evidence
+of weak statistical predictability in the current project version, but they do
+not establish profitable trading. In particular, MSE does not account for
+portfolio turnover, transaction costs, liquidity, short-selling constraints or
+risk adjustment. Nor does it show that the cross-sectional ordering of forecasts
+can be converted into stable implementable positions. The present evidence
+should therefore be interpreted as a preliminary comparison of forecasting
+methods, not as a ready-to-use investment strategy.
+
+\subsection{Performance across test years}
+
+The preliminary pooled ranking does not imply stable performance in every year. PLS and
+Random Forest achieve positive yearly out-of-sample \(R^2\) in half of the six
+test years. OLS-3 does so in one third of the years. The Decision Tree beats the
+benchmark in only one year.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.90\textwidth,
+    trim=5 5 5 22,
+    clip
+  ]{\FigurePath/yearly_oos_r2_by_model.png}
+
+  \caption{Out-of-sample \(R^2\) by model and test year}
+  \label{fig:yearly-oos-r2}
+\end{figure}
+
+The yearly results demonstrate that even the best overall model does not
+consistently outperform the historical mean. This instability is important
+because the test period contains only six years and includes unusually
+different market environments. The overall advantage of PLS should therefore
+be interpreted as an average test-period result rather than evidence of stable
+performance in every regime.
+
+\subsection{Forecast dispersion}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.90\textwidth,
+    trim=5 5 5 22,
+    clip
+  ]{\FigurePath/prediction_distribution_by_model.png}
+
+  \caption{Distribution of preliminary test-period predictions}
+  \label{fig:prediction-distribution}
+\end{figure}
+
+The prediction distributions help explain the model results.
+Elastic Net is absent as a meaningful distribution because it produces
+constant or near-constant forecasts. PLS and OLS generate relatively
+concentrated predictions, while the tree-based models produce more dispersed
+forecasts. Dispersion alone does not indicate predictive quality. The Decision
+Tree produces variable forecasts but performs poorly because those forecasts
+are systematically misaligned with realized returns.
+
+\subsection{Feature importance}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.88\textwidth,
+    trim=5 5 5 5,
+    clip
+  ]{\FigurePath/top_pls_coefficients.png}
+
+  \caption{Largest PLS coefficients by absolute magnitude}
+  \label{fig:pls-coefficients}
+\end{figure}
+
+PLS coefficients measure conditional predictive associations after
+preprocessing and scaling. Their magnitude should not be interpreted as a
+causal effect or as an estimated risk premium. Because PLS combines information
+through latent components, the coefficients reflect the joint high-dimensional
+prediction problem rather than isolated univariate relationships.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.88\textwidth,
+    trim=5 5 5 5,
+    clip
+  ]{\FigurePath/top_random_forest_features.png}
+
+  \caption{Top Random Forest predictors based on impurity importance}
+  \label{fig:rf-importance}
+\end{figure}
+
+Random Forest importance records how strongly variables reduce squared error
+inside the fitted trees. It is useful for describing where the model obtains
+its predictive variation, but it has important limitations. Correlated
+variables can divide importance among themselves, and impurity importance can
+favor predictors with more available split points. The results should therefore
+be interpreted at the level of broad predictor groups rather than as a precise
+ranking of causal variables.
+
+% ============================================================
+% 5. Critical reflection
+% ============================================================
+
+\section{Critical Reflection}
+\label{sec:critical-reflection}
+
+\subsection{Predictive gains are small}
+
+The main limitation is the weak absolute predictive performance. Although PLS
+ranks first, its out-of-sample \(R^2\) is only approximately \(0.18\%\). Random
+Forest and OLS-3 improve on the benchmark by even less. Most variation in
+monthly stock returns therefore remains unexplained.
+
+A ranking can still be statistically informative, but it should not be confused
+with strong forecasting ability. The results do not establish that the small
+differences between the leading models would remain stable in another period.
+
+\subsection{Flexible models do not automatically perform better}
+
+The results provide two important failures. First, the individual Decision Tree
+performs much worse than the historical mean. Its threshold splits are
+apparently too unstable for noisy monthly return data. Random Forest improves
+substantially by averaging across trees, illustrating the benefit of variance
+reduction.
+
+Second, Elastic Net selects no nonzero coefficients. This does not imply a
+software error. Given the selected tuning parameters and chronological
+validation procedure, the model preferred complete shrinkage over unstable
+predictor effects. The result suggests that individual linear signals are weak
+relative to the noise in the target.
+
+\subsection{Implementation issues identified during the project audit}
+
+The project audit identified six implementation and reproducibility problems
+that prevent the current outputs from being described as final results:
+
+\begin{itemize}
+  \item The ticker-level target lead contains 26 nonconsecutive transitions in
+        which the next available observation is not the immediately following
+        calendar month.
+  \item Welch--Goyal macro variables are merged in the same month rather than
+        with the intended explicit one-month availability lag.
+  \item The documentation and implementation are inconsistent about the tuning
+        periods and the model-selection rule.
+  \item The top-level \texttt{run\_pipeline.sh} became stale after the model
+        code was reorganized and references stages that no longer match the
+        active workflow.
+  \item The output structure contains excessive duplicate and legacy artifacts,
+        which makes it harder to identify the authoritative results.
+  \item Software dependencies are not pinned to exact versions, limiting exact
+        reproducibility across environments.
+\end{itemize}
+
+These issues do not make the current tables useless: they remain informative
+about model behavior and expose several robust negative findings. They do mean,
+however, that the numerical rankings must be treated as preliminary. Before the
+complete rebuild, the target continuity rule and macro lag will be corrected,
+the tuning design and documentation will be reconciled, the pipeline entry
+point will be repaired, dependencies will be pinned, and authoritative outputs
+will be separated from legacy artifacts. The existing output folder will then
+be deleted and regenerated from the permanent inputs in one clean chronological
+run.
+
+\subsection{Data limitations}
+
+The stock universe is not a fully point-in-time CRSP constituent universe.
+Ticker-based matching may be affected by symbol changes, mergers and incomplete
+historical membership records. Survivorship and universe-selection bias cannot
+be ruled out completely.
+
+Yahoo Finance does not provide the security master, delisting returns and
+microstructure information available in CRSP. Adjusted price histories may also
+be revised. Compustat fundamentals are lagged by six months, but exact public
+filing dates are not used. The resulting timing design is conservative, though
+not perfectly point in time.
+
+The use of annual Compustat information also means that accounting variables
+change less frequently than market variables. Some predictors are proxies for
+variables used in the published asset-pricing literature and may not reproduce
+their original definitions exactly.
+
+\subsection{Validation and specification risk}
+
+Annual expanding-window validation respects chronology and reduces direct
+leakage. Nevertheless, the project contains many researcher choices:
+predictor construction, interaction design, preprocessing, tuning grids and
+sample dates. These decisions may adapt indirectly to known characteristics of
+the data.
+
+An untouched holdout period remains credible only if no model changes are
+made after inspecting its performance. The current 2020--2025 outputs have
+already been examined and are therefore reported only as preliminary evidence.
+The corrected workflow must be specified before the clean rebuild, and any
+subsequent specification search would require a genuinely new holdout period.
+
+\subsection{No economic trading evaluation}
+
+The project evaluates prediction error but does not construct portfolios.
+Consequently, it does not measure turnover, transaction costs, market impact,
+short-sale constraints or risk-adjusted investment returns. A small reduction
+in MSE cannot automatically be interpreted as an economically profitable
+strategy.
+
+A useful extension would specify a portfolio rule before opening a new test
+sample. The evaluation could then report gross and net returns, volatility,
+Sharpe ratios, turnover and maximum drawdown. That analysis would have to be
+kept separate from the current test period to avoid using the same observations
+for model assessment and strategy design.
+
+\subsection{What I would do differently}
+
+With improved data access and additional time, the study could be strengthened
+in four ways:
+
+\begin{itemize}
+  \item use a point-in-time CRSP/Compustat universe with permanent identifiers
+        and delisting returns;
+  \item use exact filing dates for accounting information;
+  \item retain a longer untouched test period or evaluate several historical
+        forecast origins;
+  \item conduct a pre-specified portfolio evaluation with realistic trading
+        costs.
+\end{itemize}
+
+Interpretability could also be improved by examining feature groups, repeated
+time-block importance and stability across different expanding windows rather
+than relying on a single definitive importance ranking.
+
+% ============================================================
+% 6. Conclusion
+% ============================================================
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+This preliminary report examines whether machine-learning methods improve next-month stock
+excess-return prediction relative to a historical-mean benchmark. The models
+are selected chronologically and evaluated on a held-out 2020--2025 test
+period in the current implementation.
+
+PLS performs best according to monthly mean squared error and produces an
+out-of-sample \(R^2\) of approximately \(0.18\%\). Random Forest and OLS-3 also
+slightly outperform the benchmark. Elastic Net selects no predictors and
+effectively collapses to the historical mean. The Decision Tree performs
+substantially worse, showing that flexibility without sufficient variance
+control can be harmful.
+
+The research question can therefore be answered cautiously. Some statistical
+and machine-learning methods improve on the historical mean, but the gains are
+small and unstable across years. The results do not demonstrate strong return
+predictability or a profitable investment strategy. Their principal lesson is
+that, in noisy financial prediction problems, disciplined chronology, simple
+benchmarks and honest reporting of failures are at least as important as model
+complexity. Because the audit identified target-continuity, macro-timing and
+workflow inconsistencies, these results are not the final project evidence.
+Those issues will be corrected before the output folder is deleted and the
+project is rebuilt cleanly from its permanent inputs.
+
+% ============================================================
+% References
+% ============================================================
+
+\FloatBarrier
+\printbibliography[heading=bibintoc,title={References}]
+
+% ============================================================
+% Appendix
+% ============================================================
+
+\clearpage
+\appendix
+
+\section{Code and Reproducibility Overview}
+\label{app:code-overview}
+
+The repository implements the empirical workflow as a sequence of auditable
+stages rather than embedding source code in this report:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em,topsep=0.25em]
+  \item acquisition of permanent external inputs and cleaning of daily stock
+        histories;
+  \item construction of monthly stock features and the next-month target;
+  \item merging of lagged fundamentals and aggregate macroeconomic variables;
+  \item final missing-value treatment and within-month rank normalization;
+  \item chronological hyperparameter tuning with expanding estimation windows;
+  \item preliminary test-period refitting and evaluation;
+  \item interpretation, figure generation and report production.
+\end{enumerate}
+
+The complete Python and shell code is provided in the accompanying repository.
+This document reads its principal tables and figures from the existing
+interpretation outputs and does not retrain models or regenerate predictions
+during compilation. Before the final clean rebuild, the audited timing,
+workflow and dependency issues described in
+\cref{sec:critical-reflection} will be corrected.
+
+\section{Additional Results}
+\label{app:additional-results}
+
+\subsection{Model complexity}
+
+\begin{table}[H]
+  \centering
+  \caption{Current model complexity}
+  \label{tab:model-complexity}
+
+  \small
+  \setlength{\tabcolsep}{5pt}
+
+  \begin{tabular}{
+    l
+    S[table-format=3.0]
+    S[table-format=3.0]
+    S[table-format=2.0]
+    S[table-format=2.0]
+    S[table-format=3.0]
+  }
+    \toprule
+    {Model}
+    & {Predictors}
+    & {Nonzero}
+    & {PLS comp.}
+    & {Tree depth}
+    & {Forest trees} \\
+    \midrule
+
+    \csvreader[
+      head to column names,
+      late after line=\\
+    ]{\ResultsPath/final_model_complexity.csv}{
+      model=\Model,
+      number_of_predictors=\Predictors,
+      nonzero_coefficients=\Nonzero,
+      pls_components=\Components,
+      tree_depth=\TreeDepth,
+      forest_trees=\ForestTrees
+    }{
+      \ModelName{\Model}
+      & \CSVNumber{\Predictors}
+      & \CSVNumber{\Nonzero}
+      & \CSVNumber{\Components}
+      & \CSVNumber{\TreeDepth}
+      & \CSVNumber{\ForestTrees}
+    }
+
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Fixed versus optimized specifications}
+
+\begin{table}[H]
+  \centering
+  \caption{Validation performance of fixed and optimized specifications}
+  \label{tab:fixed-optimized}
+
+  \small
+
+  \begin{tabular}{
+    l
+    S[table-format=1.5]
+    S[table-format=1.5]
+    S[table-format=-1.5]
+    S[table-format=-1.5]
+  }
+    \toprule
+    {Model family}
+    & {Fixed MSE}
+    & {Optimized MSE}
+    & {MSE improvement}
+    & {\(\Delta R^2_{\mathrm{OOS}}\)} \\
+    \midrule
+
+    \csvreader[
+      head to column names,
+      late after line=\\
+    ]{\ResultsPath/fixed_vs_optimized_results.csv}{
+      model_family=\Family,
+      fixed_monthly_mse=\FixedMSE,
+      optimized_monthly_mse=\OptimizedMSE,
+      monthly_mse_improvement=\Improvement,
+      oos_r2_change=\RChange
+    }{
+
+    \FamilyName{\Family}
+    & \CSVNumber{\FixedMSE}
+    & \CSVNumber{\OptimizedMSE}
+    & \CSVNumber{\Improvement}
+    & \CSVNumber{\RChange}
+  }
+
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Additional tree interpretation}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[
+    width=0.88\textwidth,
+    trim=5 5 5 5,
+    clip
+  ]{\FigurePath/top_decision_tree_features.png}
+
+  \caption{Top Decision Tree predictors based on impurity importance}
+  \label{fig:dt-importance}
+\end{figure}
+
+The Decision Tree importance figure should be interpreted cautiously because
+the model has strongly negative out-of-sample performance. A variable can be
+important to a poorly performing fitted model without containing stable
+predictive information.
+
+\end{document}

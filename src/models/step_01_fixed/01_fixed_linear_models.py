@@ -1,4 +1,4 @@
-"""Estimate fixed linear benchmarks before hyperparameter tuning."""
+"""Estimate fixed linear train/validation benchmarks."""
 
 from pathlib import Path
 import sys
@@ -6,8 +6,7 @@ import sys
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.decomposition import PCA
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+from sklearn.linear_model import ElasticNet, LinearRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -20,54 +19,40 @@ from src.models.utils.data import (  # noqa: E402
     load_model_data,
     ols3_predictors,
 )
-from src.models.utils.evaluation import (  # noqa: E402
-    evaluate_model,
-    ranked_effects,
-)
+from src.models.utils.evaluation import evaluate_model  # noqa: E402
+
 
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "fixed"
-RANDOM_STATE = 42
 
 
-def fixed_models(all_predictors, ols3):
-    """Define the untuned models and the predictors used by each."""
+def fixed_models(all_predictors):
+    """Define the fixed linear model specifications."""
     return {
-        "historical_mean": (None, []),
-        "ols_plus_h": (
-            make_pipeline(StandardScaler(), LinearRegression()), all_predictors
-        ),
-        "ols_3_plus_h": (
-            make_pipeline(StandardScaler(), LinearRegression()), ols3
-        ),
-        "pcr_20": (
+        "ols_3": (
             make_pipeline(
                 StandardScaler(),
-                PCA(20, random_state=RANDOM_STATE),
                 LinearRegression(),
             ),
-            all_predictors,
+            ols3_predictors(),
         ),
-        "pls_20": (
-            make_pipeline(StandardScaler(), PLSRegression(20)), all_predictors
-        ),
-        "ridge_plus_h": (
-            make_pipeline(StandardScaler(), Ridge(alpha=1.0)), all_predictors
-        ),
-        "lasso_plus_h": (
+        "pls_fixed": (
             make_pipeline(
                 StandardScaler(),
-                Lasso(alpha=1e-5, max_iter=20_000, random_state=RANDOM_STATE),
+                PLSRegression(
+                    n_components=20,
+                    scale=False,
+                ),
             ),
             all_predictors,
         ),
-        "enet_plus_h": (
+        "elastic_net_fixed": (
             make_pipeline(
                 StandardScaler(),
                 ElasticNet(
-                    alpha=1e-5,
+                    alpha=1e-4,
                     l1_ratio=0.5,
                     max_iter=20_000,
-                    random_state=RANDOM_STATE,
+                    tol=1e-4,
                 ),
             ),
             all_predictors,
@@ -76,51 +61,98 @@ def fixed_models(all_predictors, ols3):
 
 
 def main():
-    samples, all_predictors = load_model_data()
-    models = fixed_models(all_predictors, ols3_predictors(all_predictors))
+    samples, all_predictors = load_model_data(
+        ("train", "validation")
+    )
+
+    models = fixed_models(all_predictors)
+
+    all_metrics = []
+    all_predictions = []
+    all_coefficients = []
+
     train_mean = samples["train"][TARGET].mean()
-    metrics, prediction_frames, coefficients = [], [], []
+
+    mean_predictions = {
+        sample: np.full(len(data), train_mean)
+        for sample, data in samples.items()
+    }
+
+    metrics, predictions = evaluate_model(
+        "historical_mean",
+        samples,
+        mean_predictions,
+        TARGET,
+        train_mean,
+    )
+
+    all_metrics.append(metrics)
+    all_predictions.append(predictions)
+
+    print(metrics.to_string(index=False))
 
     for name, (model, predictors) in models.items():
         print(f"Estimating {name} ({len(predictors)} predictors)")
 
-        if model is None:
-            predictions = {
-                sample: np.full(len(data), train_mean, dtype=np.float32)
-                for sample, data in samples.items()
-            }
-        else:
-            model_arrays = arrays(samples, predictors)
-            model.fit(*model_arrays["train"])
-            predictions = {
-                sample: model.predict(X).reshape(-1)
-                for sample, (X, _) in model_arrays.items()
-            }
+        model_arrays = arrays(samples, predictors)
 
-            estimator = model[-1] if hasattr(model, "steps") else model
-            if hasattr(estimator, "coef_"):
-                values = np.asarray(estimator.coef_).reshape(-1)
-                if len(values) == len(predictors):
-                    coefficients.append(
-                        ranked_effects(name, predictors, values, "coefficient")
-                    )
+        X_train, y_train = model_arrays["train"]
+        model.fit(X_train, y_train)
 
-        model_metrics, model_predictions = evaluate_model(
-            name, samples, predictions, TARGET
+        model_predictions = {
+            sample: model.predict(X).reshape(-1)
+            for sample, (X, _) in model_arrays.items()
+        }
+
+        metrics, predictions = evaluate_model(
+            name,
+            samples,
+            model_predictions,
+            TARGET,
+            train_mean,
         )
-        metrics.append(model_metrics)
-        prediction_frames.append(model_predictions)
-        print(model_metrics.to_string(index=False))
+
+        all_metrics.append(metrics)
+        all_predictions.append(predictions)
+
+        estimator = model[-1]
+        coefficients = np.asarray(estimator.coef_).reshape(-1)
+        if len(coefficients) == len(predictors):
+            all_coefficients.append(
+                pd.DataFrame({
+                    "model": name,
+                    "predictor": predictors,
+                    "coefficient": coefficients,
+                }).sort_values("coefficient", key=abs, ascending=False)
+            )
+
+        print(metrics.to_string(index=False))
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pd.concat(metrics).to_csv(OUTPUT_DIR / "fixed_linear_model_metrics.csv", index=False)
-    pd.concat(prediction_frames).to_parquet(
-        OUTPUT_DIR / "fixed_linear_model_predictions.parquet", index=False
+
+    pd.concat(
+        all_metrics,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR / "fixed_linear_model_metrics.csv",
+        index=False,
     )
-    if coefficients:
-        pd.concat(coefficients).to_csv(
-            OUTPUT_DIR / "fixed_linear_model_coefficients.csv", index=False
-        )
+
+    pd.concat(
+        all_predictions,
+        ignore_index=True,
+    ).to_parquet(
+        OUTPUT_DIR / "fixed_linear_model_predictions.parquet",
+        index=False,
+    )
+
+    pd.concat(
+        all_coefficients,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR / "fixed_linear_model_coefficients.csv",
+        index=False,
+    )
 
 
 if __name__ == "__main__":
