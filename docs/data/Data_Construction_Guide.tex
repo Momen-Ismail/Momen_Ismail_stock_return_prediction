@@ -1,0 +1,606 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.25cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+\definecolor{navy}{HTML}{17365D}
+\definecolor{darkgray}{HTML}{444444}
+\definecolor{lightgray}{HTML}{F2F4F7}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=navy,
+  citecolor=navy,
+  urlcolor=navy,
+  pdftitle={Data Construction Guide},
+  pdfauthor={Momen Ismail},
+  pdfsubject={Monthly stock return prediction data pipeline}
+}
+
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Monthly Stock Return Prediction Project}
+\rhead{Data Construction Guide}
+\cfoot{\thepage\ of \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlist[itemize]{leftmargin=1.25em,itemsep=1pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.45em,itemsep=2pt,topsep=3pt}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\target}{\code{target\_excess\_return\_next\_1m}}
+\emergencystretch=2em
+
+\begin{document}
+\hypersetup{pageanchor=false}
+
+\begin{titlepage}
+\centering
+\vspace*{2.7cm}
+{\Huge\bfseries\color{navy} Data Construction Guide\par}
+\vspace{0.45cm}
+{\Large Monthly Stock Return Prediction Project\par}
+\vspace{1.0cm}
+{\large Final reproducibility, timing, cleaning, and validation documentation\par}
+\vfill
+{\large Momen Ismail\par}
+\vspace{0.15cm}
+{\large University of Bonn\par}
+\vfill
+{\small Version 1.0 -- 26 July 2026\par}
+\vspace{0.1cm}
+{\small Final model sample: February 1990--December 2025}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+\pagenumbering{arabic}
+\hypersetup{pageanchor=true}
+
+\section{Purpose and Construction Contract}
+
+This document records the final construction of the monthly stock-return prediction dataset. Its purpose is to make the data pipeline reproducible, auditable, and explicit about the most important methodological decisions.
+
+Each observation is one stock-month. Predictors are dated at month $t$ and the target is the stock's excess return in month $t+1$:
+\[
+  y_{i,t+1}=r_{i,t+1}-RF_{t+1}.
+\]
+
+The construction contract is:
+\begin{itemize}
+  \item one row per ticker-month;
+  \item no use of information that becomes available after the predictor month;
+  \item a raw, unwinsorized prediction target;
+  \item monthly cross-sectional treatment of predictor missingness and outliers;
+  \item no model-specific standardization or sample splitting inside the common data file;
+  \item a frozen predictor list saved next to the final dataset.
+\end{itemize}
+
+The final model-ready dataset is:
+\begin{center}
+\path{output/data/final/006_model_dataset_kelly_winsorized_1990_2025.parquet}
+\end{center}
+
+The authoritative predictor list is:
+\begin{center}
+\path{output/data/final/006_predictor_columns_kelly_winsorized.csv}
+\end{center}
+
+The final file contains \code{ticker}, \code{month}, the raw target \target, and 484 predictors. Chronological development and test samples are created later in the modeling workflow rather than being stored as separate construction files.
+
+\section{Final Verified Dataset}
+
+After rebuilding the Welch--Goyal input and rerunning Files 03--05, the final verified dataset has:
+
+\begin{center}
+\begin{tabularx}{0.84\textwidth}{p{6.0cm}Y}
+\toprule
+Item & Verified value \\
+\midrule
+Rows & 211,059 \\
+Total columns & 487 \\
+Predictors & 484 \\
+Unique tickers & 656 \\
+First model month & 1990-02-28 \\
+Last model month & 2025-12-31 \\
+Missing predictor values & 0 \\
+Infinite predictor values & 0 \\
+Duplicate ticker-month rows & 0 \\
+Base predictors & 124 \\
+Continuous stock characteristics & 45 \\
+Binary stock characteristics & 3 \\
+Market and VIX variables & 4 \\
+Welch--Goyal macro variables & 8 \\
+SIC2 dummies & 64 \\
+Characteristic--macro interactions & 360 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The 124 base predictors are composed of 48 stock characteristics, 4 market/VIX variables, 8 macro states, and 64 SIC2 dummies. The 360 interactions are the Cartesian product of 45 continuous stock characteristics and 8 macro states:
+\[
+45\times 8=360.
+\]
+Binary characteristics, market variables, macro variables, and industry dummies are not interacted.
+
+\section{Pipeline Overview}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{2.1cm}p{5.3cm}Y}
+\toprule
+Stage & Main script & Role \\
+\midrule
+File 01 & \path{src/data/01_build_clean_yahoo_daily.py} & Builds and cleans the daily Yahoo stock-price panel for the locked stock universe. \\
+File 02 & \path{src/data/02_build_monthly_stock_features.py} & Aggregates daily data to monthly predictors, adds market/VIX information, and constructs the next-month excess-return target. \\
+File 03 & \path{src/data/03_add_fundamentals_and_macro.py} & Cleans annual Compustat data and merges only reports available after a conservative six-month lag. Despite the historical filename, Welch--Goyal variables are not created here. \\
+File 04 & \path{src/data/04_build_raw_kelly_dataset.py} & Adds SIC2 dummies, merges one-month-lagged Welch--Goyal variables, validates the macro source, and freezes the 124 base predictors. \\
+File 05 & \path{src/data/05_clean_and_rank_normalize.py} & Performs monthly median imputation and monthly 1st/99th percentile winsorization, then constructs the 360 interactions. The filename is retained for compatibility, but the final data are not rank-normalized. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Permanent and Restricted Inputs}
+
+\subsection{Version-controlled reproducibility inputs}
+
+The following inputs are intended to remain under version control:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{6.0cm}Y}
+\toprule
+File & Role \\
+\midrule
+\path{input/stock_universe_locked.csv} & Locked Yahoo-format stock universe used by File 01. \\
+\path{input/market_gspc_daily.csv} & Permanent daily S\&P 500 market series used for market returns, market volatility, beta, and idiosyncratic volatility. \\
+\path{input/market_vix_daily.csv} & Permanent daily VIX series used to construct monthly VIX predictors. \\
+\path{input/external/fama_french_rf_monthly.csv} & Monthly risk-free rate used to construct the excess-return target. \\
+\path{input/external/welch_goyal_macro_1990_2025.csv} & Cleaned monthly macro predictors used by File 04. \\
+\path{input/raw/PredictorData2025.xlsx} & Original updated Welch--Goyal workbook used to reproduce the cleaned macro CSV. \\
+\path{input/input_manifest.csv} & Input registry with coverage and source notes. \\
+\path{input/README.md} & Input-folder documentation. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The obsolete \path{input/raw/PredictorData.xls}, which ended in December 2005, is not retained. Empty-folder placeholder files such as \code{.gitkeep} are unnecessary once the folders contain tracked files.
+
+\subsection{Restricted or externally acquired inputs}
+
+Annual Compustat data are licensed and may be too large or restricted for public version control. The raw Compustat location is defined in \path{src/config.py}. Reproduction therefore requires the same WRDS/Compustat extraction with the variables documented in Section~\ref{sec:compustat}. The code, cleaning rules, six-month lag, and resulting variable definitions remain fully documented even when the raw licensed file cannot be distributed.
+
+Daily Yahoo stock prices are acquired by File 01 for the locked ticker universe. The locked universe and quality reports provide a reproducible record of the intended sample, while the usual limitations of vendor symbols and historical availability remain.
+
+\section{Critical Design Decisions}
+
+\subsection{Locked stock universe}
+
+The project uses a locked S\&P 500-style ticker universe rather than redownloading a changing list during each run. This prevents silent changes in the sample across executions. The design is transparent and practical, but it does not eliminate survivorship and index-selection concerns because the sample is not a full CRSP universe with permanent security identifiers.
+
+\subsection{Time-aware target and predictors}
+
+Predictors in month $t$ are used to forecast excess return in month $t+1$. Chronological ordering is enforced before all group-wise shifts. The target is created with a lead of one month within ticker:
+\[
+  \target_{i,t}=r_{i,t+1}-RF_{t+1}.
+\]
+
+The target is not winsorized in the common dataset. Large realized returns are genuine outcomes and are retained for transparent evaluation. Model-specific target treatment, if ever used as a robustness exercise, must be fitted only on the relevant training sample and reported separately.
+
+\subsection{No global preprocessing leakage}
+
+The common data file does not use full-sample standardization. Elastic Net and PLS later standardize predictors inside a training-only \code{sklearn.Pipeline}. Tree-based models use the common predictors without requiring standardization. Chronological validation is performed with expanding annual folds, not random cross-validation.
+
+\subsection{Monthly predictor treatment}
+
+File 05 applies the following predictor treatment:
+\begin{enumerate}
+  \item continuous stock characteristics are imputed by the same-month cross-sectional median;
+  \item continuous stock characteristics are winsorized at the same-month 1st and 99th percentiles;
+  \item binary variables are filled with zero when missing and remain binary;
+  \item market variables, macro variables, and SIC2 dummies are not rank-normalized;
+  \item any residual missing value after the defined treatment is filled with zero;
+  \item the target is left unchanged.
+\end{enumerate}
+
+The resulting data remain in economically interpretable raw units, subject only to monthly winsorization of the continuous stock-characteristic block.
+
+\subsection{Interaction design}
+
+The project follows a compact Kelly-style conditional-predictability design. Only continuous stock characteristics are interacted with the eight Welch--Goyal macro states:
+\[
+  Interaction_{i,t}^{c,m}=Characteristic_{i,t}^{c}\times MacroState_t^{m}.
+\]
+
+The project intentionally excludes:
+\begin{itemize}
+  \item binary-characteristic $\times$ macro interactions;
+  \item market/VIX $\times$ macro interactions;
+  \item macro $\times$ macro interactions;
+  \item SIC2 $\times$ macro interactions;
+  \item any interaction involving the target.
+\end{itemize}
+
+This decision keeps the feature space interpretable and reduces redundant expansion while still allowing characteristic premia to vary with aggregate conditions.
+
+\section{File 01: Daily Stock Prices and Quality Cleaning}
+
+\textbf{Purpose:} create a clean daily OHLCV stock panel for the locked universe.
+
+File 01 downloads Yahoo data with \code{auto\_adjust=False}, standardizes ticker and field names, sorts observations chronologically, and computes daily adjusted returns:
+\[
+  r_{i,d}=\frac{AdjClose_{i,d}}{AdjClose_{i,d-1}}-1.
+\]
+
+Daily quality rules remove invalid observations involving:
+\begin{itemize}
+  \item missing core OHLCV fields;
+  \item nonpositive adjusted prices;
+  \item impossible OHLC relations, such as \code{high < low};
+  \item duplicate ticker-date rows;
+  \item extreme daily returns above 300\% or below $-95\%$.
+\end{itemize}
+
+A complete ticker history is removed only when the bad-row share exceeds the configured threshold. This avoids discarding an otherwise usable history because of a small number of isolated bad rows.
+
+\section{File 02: Monthly Stock Features and Target}
+
+\textbf{Purpose:} aggregate daily stock, market, VIX, and risk-free-rate inputs into a monthly stock panel.
+
+Monthly return is computed from month-end adjusted prices:
+\[
+  r_{i,t}=\frac{AdjClose_{i,t}}{AdjClose_{i,t-1}}-1.
+\]
+
+Momentum variables use only lagged monthly returns and therefore exclude the contemporaneous month:
+\[
+  mom_{i,t}^{(k)}=\prod_{j=1}^{k}(1+r_{i,t-j})-1.
+\]
+
+The retained monthly stock predictors include recent return, six- and twelve-month momentum, long-horizon return, realized volatility, downside and maximum-return measures, dollar volume, Amihud illiquidity, zero-trading activity, price trend, beta, and idiosyncratic volatility.
+
+Amihud illiquidity is calculated from daily data as:
+\[
+  Amihud_{i,d}=\frac{|r_{i,d}|}{AdjClose_{i,d}\times Volume_{i,d}},
+\]
+and averaged within month.
+
+\subsection{Zero-volume correction}
+
+A final audit identified 136 daily observations with invalid zero volume. The correction was deliberately narrow: the observations were not deleted and unrelated price predictors were not altered. Only volume-derived monthly quantities were set to missing where the underlying daily volume was invalid:
+\begin{itemize}
+  \item \code{avg\_dolvol\_1m};
+  \item \code{std\_dolvol\_1m};
+  \item \code{avg\_log\_dolvol\_1m};
+  \item \code{amihud\_1m};
+  \item \code{zerotrade\_1m}.
+\end{itemize}
+
+\code{dolvol\_growth\_1m} becomes missing automatically when its underlying monthly dollar-volume input is missing. These missing values are subsequently handled by the monthly median-imputation rule in File 05. This correction preserves valid return information while preventing an invalid volume observation from contaminating liquidity predictors.
+
+\subsection{Market, VIX, beta, and idiosyncratic volatility}
+
+The direct market-state predictors are:
+\[
+\code{market\_ret\_1m},\quad
+\code{market\_vol\_1m},\quad
+\code{vix\_avg\_1m},\quad
+\code{vix\_change\_1m}.
+\]
+
+Rolling beta and idiosyncratic volatility use daily stock and market returns over a 252-trading-day window with a minimum of 126 observations:
+\[
+  \beta_{i,t}=\frac{\operatorname{Cov}(r_{i,d},r_{m,d})}
+  {\operatorname{Var}(r_{m,d})},
+\]
+\[
+  \sigma^{idio}_{i,t}=
+  \sqrt{\max\left(\operatorname{Var}(r_{i,d})-
+  \beta_{i,t}^{2}\operatorname{Var}(r_{m,d}),0\right)}.
+\]
+
+The locked risk block also includes \code{betasq\_12m}, defined as \code{beta\_12m ** 2}.
+
+\section{File 03: Annual Compustat Characteristics and Timing}
+\label{sec:compustat}
+
+\textbf{Input:} monthly stock panel and raw annual Compustat data.\\
+\textbf{Outputs:}
+\begin{itemize}
+  \item \path{output/data/staging/003_compustat_annual_clean.parquet};
+  \item \path{output/data/staging/004_monthly_panel_with_fundamentals.parquet}.
+\end{itemize}
+
+Compustat \code{datadate} is the fiscal-year-end date, not the public release date. The project imposes a conservative six-month availability lag:
+\[
+  AvailableMonth=MonthEnd(datadate+6\text{ months}).
+\]
+
+For each ticker-month, a backward as-of merge selects the most recent Compustat observation whose availability month is not later than the stock month. Reports older than \code{MAX\_COMPUSTAT\_AGE\_MONTHS} are invalidated as stale. This prevents the same old report from being carried indefinitely.
+
+The latest verified File 03 results are:
+\begin{itemize}
+  \item clean annual Compustat rows: 21,575;
+  \item clean Compustat tickers: 649;
+  \item monthly panel rows: 211,341;
+  \item monthly panel tickers: 656;
+  \item matched observations: 207,213;
+  \item unmatched observations: 4,128;
+  \item stale matches invalidated: 353;
+  \item timing violations: 0;
+  \item missing targets: 0.
+\end{itemize}
+
+\subsection{Accounting variables}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{4.2cm}Y}
+\toprule
+Family & Retained variables \\
+\midrule
+Valuation and size & \code{be\_me}, \code{ocf\_me}, \code{log\_comp\_market\_equity} \\
+Profitability & \code{op\_at}, \code{ocf\_at} \\
+Leverage and liquidity & \code{debt\_at}, \code{cash\_at}, \code{cashflow\_to\_debt}, \code{current\_ratio}, \code{quick\_ratio} \\
+Investment and asset structure & \code{capx\_at}, \code{capx\_growth}, \code{rd\_at}, \code{ppe\_at}, \code{tangibility}, \code{asset\_turnover}, \code{sales\_to\_inventory}, \code{sales\_to\_cash}, \code{sales\_to\_receivables} \\
+Accruals, payout, and financing & \code{accruals\_at}, \code{dividend\_dummy}, \code{equity\_issuance\_at}, \code{repurchase\_at} \\
+Growth and missingness & \code{asset\_growth}, \code{sales\_growth}, \code{ppeinv\_gr1a}, \code{xrd\_missing}, \code{has\_compustat\_annual} \\
+Industry & \code{sic2} before dummy encoding \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Annual growth rates are calculated only when consecutive reports are approximately one year apart. Gaps outside 300--430 days lead the affected growth variables to be set to missing rather than treating nonannual spacing as annual growth.
+
+\section{Welch--Goyal Input Reconstruction and Validation}
+
+A final variable-range audit revealed that the earlier cleaned macro file contained only 124 unique values for both \code{wg\_dp} and \code{wg\_ep} across 431 model months. Long exact constant sequences were present, including a 197-month block from August 2009 through December 2025. The merge in File 04 was correct; the problem originated in the prepared external input.
+
+The obsolete source workbook \path{PredictorData.xls} ended in December 2005. The corrected reproducibility source is:
+\begin{center}
+\path{input/raw/PredictorData2025.xlsx}
+\end{center}
+
+Its monthly sheet contains 1,860 observations from January 1871 through December 2025 and includes \code{Index}, \code{D12}, \code{E12}, \code{b/m}, \code{tbl}, \code{AAA}, \code{BAA}, \code{lty}, \code{ntis}, and \code{svar}.
+
+The acquisition script \path{src/acquisition/04_create_welch_goyal_input.py} now reconstructs the cleaned macro file for January 1990--December 2025 using:
+\[
+  wg\_dp_t=\log\left(\frac{D12_t}{Index_t}\right),
+  \qquad
+  wg\_ep_t=\log\left(\frac{E12_t}{Index_t}\right),
+\]
+\[
+  wg\_tms_t=lty_t-tbl_t,
+  \qquad
+  wg\_dfy_t=BAA_t-AAA_t.
+\]
+
+The remaining variables are copied directly:
+\[
+  wg\_bm=b/m,\quad wg\_ntis=ntis,\quad
+  wg\_tbl=tbl,\quad wg\_svar=svar.
+\]
+
+No forward filling is used. The validator checks:
+\begin{itemize}
+  \item valid and unique month values;
+  \item a continuous monthly sequence;
+  \item numeric macro columns without missing or infinite values;
+  \item suspicious exact constant runs for \code{wg\_dp} and \code{wg\_ep}.
+\end{itemize}
+
+The corrected external file has 432 monthly observations and 432 unique values for both \code{wg\_dp} and \code{wg\_ep}. After the one-month lag and removal of January 1990, the final model panel has 431 unique monthly values for each variable.
+
+\section{File 04: Raw Kelly-Style Base Panel}
+
+\textbf{Inputs:}
+\begin{itemize}
+  \item \path{output/data/staging/004_monthly_panel_with_fundamentals.parquet};
+  \item \path{input/external/welch_goyal_macro_1990_2025.csv}.
+\end{itemize}
+
+\textbf{Outputs:}
+\begin{itemize}
+  \item \path{output/data/staging/005_raw_kelly_base.parquet};
+  \item \path{output/data/staging/005_raw_kelly_predictors.csv};
+  \item \path{output/quality/005_raw_kelly_summary.csv}.
+\end{itemize}
+
+File 04 creates SIC2 industry dummies, including \code{sic2\_missing}, and requires exactly one industry category per observation. It then shifts each Welch--Goyal source month forward by one month before merging. Therefore, the macro information dated month $t$ becomes a predictor for stock month $t+1$.
+
+January 1990 has no December 1989 macro source row in the restricted cleaned file, so its 282 stock observations contain missing macro states. This is expected. File 05 removes that complete first month, yielding a final sample beginning in February 1990.
+
+The verified File 04 base panel has:
+\begin{itemize}
+  \item rows: 211,341;
+  \item total columns: 127;
+  \item tickers: 656;
+  \item base predictors: 124;
+  \item stock characteristics: 48;
+  \item market variables: 4;
+  \item macro variables: 8;
+  \item SIC2 dummies: 64;
+  \item rows with macro missing: 282, all in January 1990;
+  \item missing targets: 0;
+  \item infinite values: 0;
+  \item duplicate ticker-month rows: 0.
+\end{itemize}
+
+\section{File 05: Imputation, Winsorization, and Interactions}
+
+\textbf{Inputs:}
+\begin{itemize}
+  \item \path{output/data/staging/005_raw_kelly_base.parquet};
+  \item \path{output/data/staging/005_raw_kelly_predictors.csv}.
+\end{itemize}
+
+\textbf{Outputs:}
+\begin{itemize}
+  \item \path{output/data/final/006_model_dataset_kelly_winsorized_1990_2025.parquet};
+  \item \path{output/data/final/006_predictor_columns_kelly_winsorized.csv};
+  \item \path{output/quality/006_cleaning_summary.csv}.
+\end{itemize}
+
+The script name still contains \code{rank\_normalize} for compatibility with the earlier project structure. The final methodology no longer rank-normalizes predictors. The final transformation is monthly median imputation plus monthly 1st/99th percentile winsorization of continuous stock characteristics.
+
+\subsection{Variable blocks}
+
+The 48 stock characteristics are divided into:
+\begin{itemize}
+  \item 45 continuous characteristics;
+  \item 3 binary characteristics: \code{dividend\_dummy}, \code{xrd\_missing}, and \code{has\_compustat\_annual}.
+\end{itemize}
+
+Continuous characteristics are imputed and winsorized within month. Binary variables are filled with zero and remain in $\{0,1\}$. The four market variables, eight macro variables, and 64 SIC2 dummies are preserved without cross-sectional ranking.
+
+After characteristic processing, File 05 constructs 360 continuous-characteristic $\times$ macro interactions. The final file contains 484 predictors and 487 total columns.
+
+\section{Final Predictor Groups}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{3.8cm}Y}
+\toprule
+Group & Examples and retained variables \\
+\midrule
+Recent return and momentum & \code{ret\_1m}, \code{mom6m}, \code{mom12m}, \code{long\_term\_return\_36m} \\
+Volatility and tail risk & \code{retvol\_1m}, \code{retvol12m}, \code{minret\_1m}, \code{rmax5\_21d}, \code{beta\_12m}, \code{betasq\_12m}, \code{idiovol\_12m} \\
+Liquidity and trading activity & \code{avg\_dolvol\_1m}, \code{std\_dolvol\_1m}, \code{avg\_log\_dolvol\_1m}, \code{amihud\_1m}, \code{zerotrade\_1m}, \code{dolvol\_growth\_1m} \\
+Price trend & \code{price\_to\_ma12}, \code{dist\_from\_high\_12m}, \code{avg\_range\_1m} \\
+Market and VIX state & \code{market\_ret\_1m}, \code{market\_vol\_1m}, \code{vix\_avg\_1m}, \code{vix\_change\_1m} \\
+Valuation and size & \code{be\_me}, \code{ocf\_me}, \code{log\_comp\_market\_equity} \\
+Profitability & \code{op\_at}, \code{ocf\_at} \\
+Leverage and liquidity & \code{debt\_at}, \code{cash\_at}, \code{cashflow\_to\_debt}, \code{current\_ratio}, \code{quick\_ratio} \\
+Investment and asset structure & \code{capx\_at}, \code{capx\_growth}, \code{rd\_at}, \code{ppe\_at}, \code{tangibility}, \code{asset\_turnover}, \code{sales\_to\_inventory}, \code{sales\_to\_cash}, \code{sales\_to\_receivables} \\
+Accruals, payout, and financing & \code{accruals\_at}, \code{dividend\_dummy}, \code{equity\_issuance\_at}, \code{repurchase\_at} \\
+Growth and missingness & \code{asset\_growth}, \code{sales\_growth}, \code{ppeinv\_gr1a}, \code{xrd\_missing}, \code{has\_compustat\_annual} \\
+Industry controls & 64 SIC2 dummies, including \code{sic2\_missing} \\
+Macro states & \code{wg\_dp}, \code{wg\_ep}, \code{wg\_bm}, \code{wg\_ntis}, \code{wg\_tbl}, \code{wg\_tms}, \code{wg\_dfy}, \code{wg\_svar} \\
+Interactions & each of 45 continuous stock characteristics multiplied by each of 8 macro states \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Timing and Leakage Controls}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{4.1cm}Y}
+\toprule
+Control & Implementation \\
+\midrule
+Chronological sorting & Data are sorted by ticker and date before all shifts and rolling calculations. \\
+Target timing & Month-$t$ row predicts stock excess return in month $t+1$. \\
+Momentum timing & Momentum uses lagged monthly returns and excludes the contemporaneous month. \\
+Market timing & Monthly market and VIX predictors use information observed by the end of month $t$. \\
+Macro timing & Welch--Goyal month $t$ is shifted forward and used for stock month $t+1$. \\
+Accounting timing & Annual Compustat data become available six months after fiscal-year end. \\
+Accounting merge & Backward as-of merge prevents future reports from entering past months. \\
+Stale reports & Accounting matches older than the configured maximum age are invalidated. \\
+Imputation & Continuous characteristics use only the same month's cross-section. \\
+Winsorization & Monthly 1st/99th percentiles are calculated only within the contemporaneous cross-section. \\
+Model scaling & Standardization is deferred to training-only model pipelines. \\
+Model validation & Annual expanding-window folds are used rather than random cross-validation. \\
+Final test & The final test period is held out from 2020 through 2025. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Validation Results}
+
+The final mechanical validation confirms:
+\begin{itemize}
+  \item zero missing predictor values;
+  \item zero infinite predictor values;
+  \item zero duplicate ticker-month rows;
+  \item zero constant predictors;
+  \item unique predictor names;
+  \item each SIC2 row sums to exactly one dummy;
+  \item each market and macro variable has one value per month;
+  \item all 360 interaction columns equal the exact product of their processed characteristic and macro components;
+  \item \code{wg\_dp} and \code{wg\_ep} have 431 distinct values across the 431 final model months;
+  \item the December 2025 row contains November 2025 Welch--Goyal values, confirming the intended one-month lag.
+\end{itemize}
+
+The raw target is intentionally not clipped. The variable-range audit found a minimum of approximately $-0.935$ and a maximum of approximately $16.251$. Such observations are retained because the target represents realized next-month excess returns. Evaluation metrics should therefore include robust complements such as MAE in addition to MSE, while monthly MSE remains the primary project metric.
+
+\section{Reproduction Steps}
+
+From the project root, rebuild the permanent Welch--Goyal input when necessary:
+\begin{enumerate}
+  \item \code{python3 src/acquisition/04\_create\_welch\_goyal\_input.py}
+\end{enumerate}
+
+Then run the construction pipeline:
+\begin{enumerate}
+  \item \code{python3 src/data/01\_build\_clean\_yahoo\_daily.py}
+  \item \code{python3 src/data/02\_build\_monthly\_stock\_features.py}
+  \item \code{python3 src/data/03\_add\_fundamentals\_and\_macro.py}
+  \item \code{python3 src/data/04\_build\_raw\_kelly\_dataset.py}
+  \item \code{python3 src/data/05\_clean\_and\_rank\_normalize.py}
+\end{enumerate}
+
+The Welch--Goyal acquisition script is deterministic given \path{input/raw/PredictorData2025.xlsx}. The normal production scripts should not silently replace permanent market, VIX, Fama--French, or macro inputs.
+
+\section{Modeling Interface}
+
+The predictor file is authoritative. Modeling scripts should load predictors from:
+\begin{center}
+\path{output/data/final/006_predictor_columns_kelly_winsorized.csv}
+\end{center}
+rather than reconstructing the feature list manually.
+
+The locked modeling design is:
+\begin{itemize}
+  \item development sample: 1990--2019;
+  \item annual expanding validation folds: 2005--2019;
+  \item final untouched test sample: 2020--2025;
+  \item primary tuning and evaluation metric: average monthly MSE;
+  \item model families: historical mean, OLS-3, Elastic Net, PLS, Random Forest, Gradient Boosting, and an optional shallow decision tree for interpretation;
+  \item standardization only inside the training pipeline for models that require it.
+\end{itemize}
+
+\section{Limitations}
+
+The final dataset is designed for a transparent course project rather than a complete replication of the CRSP/Compustat universe used in the largest empirical asset-pricing studies. Important limitations are:
+\begin{itemize}
+  \item the locked S\&P 500-style universe creates survivorship and index-selection concerns;
+  \item Yahoo ticker histories are not permanent security identifiers;
+  \item exact Compustat filing dates are not used, so the six-month lag is conservative rather than report-specific;
+  \item annual rather than quarterly Compustat data limit the available anomaly set;
+  \item analyst forecasts, detailed CRSP microstructure fields, and other proprietary inputs are unavailable;
+  \item some predictors are transparent Yahoo/annual-Compustat proxies rather than exact published-characteristic replications.
+\end{itemize}
+
+These limitations should be stated in any report using the dataset. They do not invalidate the exercise, but they define the scope of the empirical conclusions.
+
+\section{References}
+
+\begin{thebibliography}{20}
+\bibitem{amihud2002} Amihud, Y. 2002. Illiquidity and stock returns: cross-section and time-series effects. \textit{Journal of Financial Markets}.
+\bibitem{ang2006} Ang, A., Hodrick, R., Xing, Y., and Zhang, X. 2006. The cross-section of volatility and expected returns. \textit{Journal of Finance}.
+\bibitem{bali2011} Bali, T., Cakici, N., and Whitelaw, R. 2011. Maxing out: stocks as lotteries and the cross-section of expected returns. \textit{Journal of Financial Economics}.
+\bibitem{cboe2019} Cboe. 2019. \textit{VIX White Paper}.
+\bibitem{fama1992} Fama, E., and French, K. 1992. The cross-section of expected stock returns. \textit{Journal of Finance}.
+\bibitem{george2004} George, T., and Hwang, C. 2004. The 52-week high and momentum investing. \textit{Journal of Finance}.
+\bibitem{gkx2020} Gu, S., Kelly, B., and Xiu, D. 2020. Empirical asset pricing via machine learning. \textit{Review of Financial Studies}.
+\bibitem{green2017} Green, J., Hand, J., and Zhang, X. 2017. The characteristics that provide independent information about average U.S. monthly stock returns. \textit{Review of Financial Studies}.
+\bibitem{jegadeesh1993} Jegadeesh, N., and Titman, S. 1993. Returns to buying winners and selling losers. \textit{Journal of Finance}.
+\bibitem{novymarx2013} Novy-Marx, R. 2013. The other side of value: the gross profitability premium. \textit{Journal of Financial Economics}.
+\bibitem{sloan1996} Sloan, R. 1996. Do stock prices fully reflect information in accruals and cash flows? \textit{Accounting Review}.
+\bibitem{titman2004} Titman, S., Wei, K., and Xie, F. 2004. Capital investments and stock returns. \textit{Journal of Financial and Quantitative Analysis}.
+\bibitem{welchgoyal2008} Welch, I., and Goyal, A. 2008. A comprehensive look at the empirical performance of equity premium prediction. \textit{Review of Financial Studies}.
+\end{thebibliography}
+
+\end{document}

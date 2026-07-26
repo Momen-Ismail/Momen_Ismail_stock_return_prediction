@@ -1,0 +1,29 @@
+\contentsline {section}{\numberline {1}Purpose and Construction Contract}{1}{section.1}%
+\contentsline {section}{\numberline {2}Final Verified Dataset}{1}{section.2}%
+\contentsline {section}{\numberline {3}Pipeline Overview}{2}{section.3}%
+\contentsline {section}{\numberline {4}Permanent and Restricted Inputs}{2}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Version-controlled reproducibility inputs}{2}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Restricted or externally acquired inputs}{3}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Critical Design Decisions}{3}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Locked stock universe}{3}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Time-aware target and predictors}{3}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}No global preprocessing leakage}{3}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Monthly predictor treatment}{3}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Interaction design}{4}{subsection.5.5}%
+\contentsline {section}{\numberline {6}File 01: Daily Stock Prices and Quality Cleaning}{4}{section.6}%
+\contentsline {section}{\numberline {7}File 02: Monthly Stock Features and Target}{4}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Zero-volume correction}{5}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Market, VIX, beta, and idiosyncratic volatility}{5}{subsection.7.2}%
+\contentsline {section}{\numberline {8}File 03: Annual Compustat Characteristics and Timing}{6}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Accounting variables}{6}{subsection.8.1}%
+\contentsline {section}{\numberline {9}Welch--Goyal Input Reconstruction and Validation}{7}{section.9}%
+\contentsline {section}{\numberline {10}File 04: Raw Kelly-Style Base Panel}{7}{section.10}%
+\contentsline {section}{\numberline {11}File 05: Imputation, Winsorization, and Interactions}{8}{section.11}%
+\contentsline {subsection}{\numberline {11.1}Variable blocks}{8}{subsection.11.1}%
+\contentsline {section}{\numberline {12}Final Predictor Groups}{9}{section.12}%
+\contentsline {section}{\numberline {13}Timing and Leakage Controls}{10}{section.13}%
+\contentsline {section}{\numberline {14}Validation Results}{10}{section.14}%
+\contentsline {section}{\numberline {15}Reproduction Steps}{11}{section.15}%
+\contentsline {section}{\numberline {16}Modeling Interface}{11}{section.16}%
+\contentsline {section}{\numberline {17}Limitations}{11}{section.17}%
+\contentsline {section}{\numberline {18}References}{12}{section.18}%
