@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import pandas as pd
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
 
@@ -16,6 +17,15 @@ from src.models.utils.evaluation import evaluate_predictions  # noqa: E402
 
 FIXED_DIR = MODEL_OUTPUT_DIR / "fixed"
 OUTPUT_DIR = FIXED_DIR / "diagnostics"
+
+ACTIVE_MODELS = {
+    "historical_mean",
+    "ols_3",
+    "pls_fixed",
+    "elastic_net_fixed",
+    "random_forest_fixed",
+    "gradient_boosting_fixed",
+}
 
 
 def load_predictions():
@@ -28,10 +38,16 @@ def load_predictions():
         FIXED_DIR / "fixed_tree_model_predictions.parquet"
     )
 
-    return pd.concat(
+    predictions = pd.concat(
         [linear, tree],
         ignore_index=True,
     )
+
+    predictions = predictions[
+        predictions["model"].isin(ACTIVE_MODELS)
+    ].copy()
+
+    return predictions
 
 
 def target_summary(samples):
@@ -113,6 +129,7 @@ def validation_by_year(predictions, train_mean):
             "model": model,
             "year": year,
             "observations": len(data),
+            "months": data["month"].nunique(),
             **metrics,
         })
 
@@ -120,8 +137,11 @@ def validation_by_year(predictions, train_mean):
 
 
 def extreme_predictions(predictions):
-    """Return the largest absolute fixed-model predictions."""
-    data = predictions.copy()
+    """Return the largest absolute non-benchmark predictions."""
+    data = predictions[
+        predictions["model"] != "historical_mean"
+    ].copy()
+
     data["absolute_prediction"] = data["prediction"].abs()
 
     return (
@@ -138,26 +158,73 @@ def extreme_predictions(predictions):
 
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     samples, _ = load_model_data(
         ("train", "validation")
     )
 
     predictions = load_predictions()
+
     predictions["month"] = pd.to_datetime(
         predictions["month"]
     )
 
+    if predictions["sample"].eq("test").any():
+        raise ValueError(
+            "Fixed-model diagnostics must not contain test rows."
+        )
+
+    missing_models = (
+        ACTIVE_MODELS
+        - set(predictions["model"].unique())
+    )
+
+    if missing_models:
+        raise ValueError(
+            "Missing fixed-model predictions for: "
+            f"{sorted(missing_models)}"
+        )
+
+    duplicate_rows = predictions.duplicated(
+        ["model", "sample", "ticker", "month"]
+    ).sum()
+
+    if duplicate_rows:
+        raise ValueError(
+            "Duplicate fixed-model prediction rows: "
+            f"{duplicate_rows}"
+        )
+
+    if predictions["prediction"].isna().any():
+        raise ValueError(
+            "Fixed-model predictions contain missing values."
+        )
+
+    if np.isinf(predictions["prediction"]).any():
+        raise ValueError(
+            "Fixed-model predictions contain infinite values."
+        )
+
     train_mean = samples["train"][TARGET].mean()
 
     targets = target_summary(samples)
-    prediction_distribution = prediction_summary(predictions)
+
+    prediction_distribution = prediction_summary(
+        predictions
+    )
+
     yearly_results = validation_by_year(
         predictions,
         train_mean,
     )
-    extremes = extreme_predictions(predictions)
+
+    extremes = extreme_predictions(
+        predictions
+    )
 
     targets.to_csv(
         OUTPUT_DIR / "target_summary.csv",
@@ -179,28 +246,53 @@ def main():
         index=False,
     )
 
-    decision_tree = prediction_distribution[
-        (
-            prediction_distribution["model"]
-            == "decision_tree_fixed"
-        )
-        & (
-            prediction_distribution["sample"]
-            == "validation"
-        )
-    ]
+    validation_summary = prediction_distribution[
+        prediction_distribution["sample"]
+        == "validation"
+    ].sort_values(
+        "std",
+        ascending=False,
+    )
 
     print("\nTarget summary:")
-    print(targets.to_string(index=False))
+    print(
+        targets.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.6f}",
+        )
+    )
 
-    print("\nPrediction summary:")
-    print(prediction_distribution.to_string(index=False))
+    print("\nValidation prediction summary:")
+    print(
+        validation_summary.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.6f}",
+        )
+    )
 
-    print("\nDecision Tree validation prediction behavior:")
-    print(decision_tree.to_string(index=False))
+    print("\nValidation performance by year:")
+    print(
+        yearly_results[
+            [
+                "model",
+                "year",
+                "monthly_mse",
+                "monthly_oos_r2",
+                "prediction_target_correlation",
+            ]
+        ].sort_values(
+            ["year", "monthly_mse"]
+        ).to_string(
+            index=False,
+            float_format=lambda value: f"{value:.6f}",
+        )
+    )
 
-    print(f"\nDiagnostic files saved in: {OUTPUT_DIR}")
+    print(
+        f"\nDiagnostic files saved in: {OUTPUT_DIR}"
+    )
 
 
 if __name__ == "__main__":
     main()
+    

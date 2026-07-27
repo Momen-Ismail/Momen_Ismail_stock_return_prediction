@@ -1,10 +1,12 @@
-"""Tune tree models using annual expanding-window validation."""
+"""Tune tree-ensemble models using annual expanding-window validation."""
 
 from pathlib import Path
 import sys
 
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    RandomForestRegressor,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.append(str(PROJECT_ROOT))
@@ -25,52 +27,47 @@ RANDOM_STATE = 42
 
 
 GRIDS = {
-    "decision_tree": {
-        "max_depth": [2, 3, 4, 5],
-        "min_samples_leaf": [100, 250, 500, 1000],
-    },
-
-    # "decision_tree": {
-    # "max_depth": [2, 3],
-    # "min_samples_leaf": [500, 1000, 1500, 2000],
-    # }
-
     "random_forest": {
-        "n_estimators": [100, 200],
-        "max_depth": [2, 3, 5],
-        "min_samples_leaf": [100],# here we leave just one because
-        # we don't need to optimizing on this parameter, we just want to see if the model is better than the decision tree
-        
-        "max_features": ["sqrt"],
+        "n_estimators": [100, 200 , 300],
     },
-
-    # "random_forest": {
-    # "n_estimators": [200, 300],
-    # "max_depth": [1, 2, 3],
-    # "min_samples_leaf": [100, 250, 500],
-    # "max_features": ["sqrt"],
-    # }
-
+    "gradient_boosting": {
+        "n_estimators": [100, 200, 300],
+        "learning_rate": [0.01, 0.3],
+        "max_depth": [1, 2],
+    },
 }
 
 
 def make_model(family, params):
-    """Construct one tree-model candidate."""
-    if family == "decision_tree":
-        return DecisionTreeRegressor(
-            **params,
-            random_state=RANDOM_STATE,
-        )
-
+    """Construct one tree-ensemble candidate."""
     if family == "random_forest":
         return RandomForestRegressor(
-            **params,
+            n_estimators=int(params["n_estimators"]),
+            max_features="sqrt",
+            min_samples_leaf=20,
+            bootstrap=True,
             n_jobs=-1,
             random_state=RANDOM_STATE,
         )
 
+    if family == "gradient_boosting":
+        return GradientBoostingRegressor(
+            n_estimators=int(params["n_estimators"]),
+            learning_rate=float(params["learning_rate"]),
+            max_depth=int(params["max_depth"]),
+            random_state=RANDOM_STATE,
+        )
+
+    raise ValueError(
+        f"Unknown model family: {family}"
+    )
+
+
 def main():
-    samples, predictors = load_model_data(("train",))
+    samples, predictors = load_model_data(
+        ("train",)
+    )
+
     train = samples["train"]
 
     folds = expanding_year_folds(

@@ -24,8 +24,26 @@ def evaluate_predictions(y_true, y_pred, benchmark, months):
     pooled_mse = mean_squared_error(y_true, y_pred)
     month_mse = monthly_mse(y_true, y_pred, months)
 
+    benchmark_month_mse = monthly_mse(
+        y_true,
+        benchmark,
+        months,
+    )
+
     model_sse = np.sum((y_true - y_pred) ** 2)
     benchmark_sse = np.sum((y_true - benchmark) ** 2)
+
+    pooled_oos_r2 = (
+        1 - model_sse / benchmark_sse
+        if benchmark_sse > 0
+        else np.nan
+    )
+
+    monthly_oos_r2 = (
+        1 - month_mse / benchmark_month_mse
+        if benchmark_month_mse > 0
+        else np.nan
+    )
 
     prediction_std = np.std(y_pred)
 
@@ -41,10 +59,11 @@ def evaluate_predictions(y_true, y_pred, benchmark, months):
         "pooled_mae": mean_absolute_error(y_true, y_pred),
         "monthly_mse": month_mse,
         "monthly_rmse": np.sqrt(month_mse),
-        "oos_r2": 1 - model_sse / benchmark_sse,
+        "oos_r2": pooled_oos_r2,
+        "monthly_oos_r2": monthly_oos_r2,
         "prediction_target_correlation": correlation,
         "prediction_mean": np.mean(y_pred),
-        "prediction_std": np.std(y_pred),
+        "prediction_std": prediction_std,
     }
 
 
@@ -54,7 +73,7 @@ def evaluate_model(
     predictions,
     target,
     benchmark_mean,
-)-> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate one model and create its prediction table."""
     all_metrics = []
     all_predictions = []

@@ -5,21 +5,23 @@ import sys
 
 import pandas as pd
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR  # noqa: E402
 from src.models.utils.evaluation import rank_models  # noqa: E402
 
 
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "fixed"
+
 ACTIVE_MODELS = {
     "historical_mean",
     "ols_3",
     "pls_fixed",
     "elastic_net_fixed",
-    "decision_tree_fixed",
     "random_forest_fixed",
+    "gradient_boosting_fixed",
 }
 
 
@@ -32,14 +34,36 @@ def main():
         OUTPUT_DIR / "fixed_tree_model_metrics.csv"
     )
 
-    if linear_metrics["sample"].eq("test").any() or tree_metrics["sample"].eq("test").any():
-        raise ValueError("Fixed-model comparison must not contain test rows.")
+    if (
+        linear_metrics["sample"].eq("test").any()
+        or tree_metrics["sample"].eq("test").any()
+    ):
+        raise ValueError(
+            "Fixed-model comparison must not contain test rows."
+        )
 
     metrics = pd.concat(
-        [linear_metrics, tree_metrics],
+        [
+            linear_metrics,
+            tree_metrics,
+        ],
         ignore_index=True,
     )
-    metrics = metrics[metrics["model"].isin(ACTIVE_MODELS)].copy()
+
+    metrics = metrics[
+        metrics["model"].isin(ACTIVE_MODELS)
+    ].copy()
+
+    missing_models = (
+        ACTIVE_MODELS
+        - set(metrics["model"].unique())
+    )
+
+    if missing_models:
+        raise ValueError(
+            "Missing fixed-model results for: "
+            f"{sorted(missing_models)}"
+        )
 
     ranking = rank_models(
         metrics,
@@ -56,15 +80,19 @@ def main():
         index=False,
     )
 
+    ranking_columns = [
+        "rank",
+        "model",
+        "monthly_mse",
+        "monthly_rmse",
+        "monthly_oos_r2",
+        "pooled_rmse",
+        "oos_r2",
+    ]
+
     print(
         ranking[
-            [
-                "rank",
-                "model",
-                "monthly_mse",
-                "pooled_rmse",
-                "oos_r2",
-            ]
+            ranking_columns
         ].to_string(index=False)
     )
 

@@ -11,15 +11,17 @@ env/
 
 
 # --------------------------------------------------
-# macOS
+# macOS and editors
 # --------------------------------------------------
 .DS_Store
-
-
-# --------------------------------------------------
-# VS Code
-# --------------------------------------------------
 .vscode/
+
+
+# --------------------------------------------------
+# Local caches and backups
+# --------------------------------------------------
+.matplotlib/
+backup/
 
 
 # --------------------------------------------------
@@ -31,7 +33,7 @@ output/reports/*
 output/quality/*
 
 
-# Keep empty output-folder structure
+# Keep the empty output-folder structure
 !output/data/staging/
 output/data/staging/*
 !output/data/staging/.gitkeep
@@ -42,19 +44,42 @@ output/data/final/*
 
 !output/models/.gitkeep
 !output/reports/.gitkeep
+!output/quality/.gitkeep
 
 
 # --------------------------------------------------
-# Large/generated data and model formats
+# Large model and binary artifacts outside output/
 # --------------------------------------------------
-*.csv
 *.parquet
-*.xlsx
-*.xls
-*.zip
 *.h5
 *.pkl
 *.joblib
+*.zip
+
+
+# --------------------------------------------------
+# Reproducibility inputs
+# --------------------------------------------------
+# Ignore input contents by default, then retain only
+# the permanent inputs required to reproduce the project.
+input/*
+
+# Locked stock universe and market inputs
+!input/stock_universe_locked.csv
+!input/market_gspc_daily.csv
+!input/market_vix_daily.csv
+!input/input_manifest.csv
+
+# Cleaned external inputs
+!input/external/
+input/external/*
+!input/external/fama_french_rf_monthly.csv
+!input/external/welch_goyal_macro_1990_2025.csv
+
+# Original Welch-Goyal workbook
+!input/raw/
+input/raw/*
+!input/raw/PredictorData2025.xlsx
 
 
 # --------------------------------------------------
@@ -64,26 +89,49 @@ output/data/final/*
 
 
 # --------------------------------------------------
-# Reproducibility inputs tracked by Git
+# LaTeX temporary files
 # --------------------------------------------------
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
 
-# Locked stock universe
-!input/stock_universe_locked.csv
 
-# Daily market inputs
-!input/market_gspc_daily.csv
-!input/market_vix_daily.csv
+# --------------------------------------------------
+# Final documentation assets
+# --------------------------------------------------
+# Final figures and LaTeX tables are intentionally tracked.
+!documentation/figures/
+!documentation/figures/*.png
 
-# Input documentation and manifest
-!input/input_manifest.csv
+!documentation/tables/
+!documentation/tables/*.tex
 
-# Cleaned external inputs used by the pipeline
-!input/external/
-input/external/*
-!input/external/fama_french_rf_monthly.csv
-!input/external/welch_goyal_macro_1990_2025.csv
+# Ignore generated PDFs by default, but retain the final
+# paper and the data-construction guide.
+documentation/pdf/*
+!documentation/pdf/.gitkeep
+!documentation/pdf/thesis.pdf
+!documentation/pdf/Data_Construction_Guide.pdf
 
-# Original Welch-Goyal workbook used to reproduce the cleaned macro file
-!input/raw/
-input/raw/*
-!input/raw/PredictorData2025.xlsx
+
+# --------------------------------------------------
+# Internal final-submission audit
+# --------------------------------------------------
+# This report is used to prepare the submission but is not
+# part of the public final project.
+documentation/documents/final_submission_audit/
+documentation/tables/final_submission_*.csv
+documentation/pdf/final_submission_audit.pdf

@@ -3,17 +3,26 @@
 from pathlib import Path
 import sys
 
+import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    RandomForestRegressor,
+)
+from sklearn.metrics import mean_squared_error
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import MODEL_OUTPUT_DIR, TARGET  # noqa: E402
 from src.models.utils.data import arrays, load_model_data  # noqa: E402
 from src.models.utils.estimation import load_best_parameters  # noqa: E402
-from src.models.utils.evaluation import evaluate_model  # noqa: E402
+from src.models.utils.evaluation import (  # noqa: E402
+    evaluate_model,
+    monthly_mse,
+)
+
 
 TUNING_DIR = MODEL_OUTPUT_DIR / "tuning"
 OUTPUT_DIR = MODEL_OUTPUT_DIR / "optimization"
@@ -21,75 +30,224 @@ RANDOM_STATE = 42
 
 
 def optimized_models():
-    """Define tree models from the saved tuning results."""
-    tree = load_best_parameters(TUNING_DIR / "decision_tree_best_parameters.csv")
-    forest = load_best_parameters(TUNING_DIR / "random_forest_best_parameters.csv")
-    return {
-        "decision_tree_optimized": DecisionTreeRegressor(
-            max_depth=None if tree["max_depth"] is None else int(tree["max_depth"]),
-            min_samples_leaf=int(tree["min_samples_leaf"]),
+    """Define tree-ensemble models from the saved tuning results."""
+    forest_parameters = load_best_parameters(
+        TUNING_DIR / "random_forest_best_parameters.csv"
+    )
+
+    boosting_parameters = load_best_parameters(
+        TUNING_DIR / "gradient_boosting_best_parameters.csv"
+    )
+
+    models = {
+        "random_forest_optimized": RandomForestRegressor(
+            n_estimators=int(
+                forest_parameters["n_estimators"]
+            ),
+            max_features="sqrt",
+            min_samples_leaf=20,
+            bootstrap=True,
+            oob_score=True,
+            n_jobs=-1,
             random_state=RANDOM_STATE,
         ),
-        "random_forest_optimized": RandomForestRegressor(
-            n_estimators=int(forest["n_estimators"]),
-            max_depth=(
-                None
-                if forest["max_depth"] is None
-                else int(forest["max_depth"])
+        "gradient_boosting_optimized": GradientBoostingRegressor(
+            n_estimators=int(
+                boosting_parameters["n_estimators"]
             ),
-            min_samples_leaf=int(forest["min_samples_leaf"]),
-            max_features=forest["max_features"],
-            n_jobs=-1,
-            oob_score=True,
+            learning_rate=float(
+                boosting_parameters["learning_rate"]
+            ),
+            max_depth=int(
+                boosting_parameters["max_depth"]
+            ),
             random_state=RANDOM_STATE,
         ),
     }
 
+    specifications = pd.DataFrame([
+        {
+            "model": "random_forest_optimized",
+            "parameters": str({
+                **forest_parameters,
+                "max_features": "sqrt",
+                "min_samples_leaf": 20,
+                "bootstrap": True,
+            }),
+        },
+        {
+            "model": "gradient_boosting_optimized",
+            "parameters": str(
+                boosting_parameters
+            ),
+        },
+    ])
+
+    return models, specifications
+
 
 def main():
-    samples, predictors = load_model_data(("train", "validation"))
-    model_arrays = arrays(samples, predictors)
+    samples, predictors = load_model_data(
+        ("train", "validation")
+    )
+
+    model_arrays = arrays(
+        samples,
+        predictors,
+    )
+
     X_train, y_train = model_arrays["train"]
+    train_months = samples["train"]["month"].to_numpy()
     train_mean = samples["train"][TARGET].mean()
+
+    models, specifications = optimized_models()
 
     all_metrics = []
     all_predictions = []
     all_importances = []
 
-    for name, model in optimized_models().items():
-        print(f"Estimating {name} ({len(predictors)} predictors)")
-        model.fit(X_train, y_train)
+    for name, model in models.items():
+        print(
+            f"Estimating {name} "
+            f"({len(predictors)} predictors)"
+        )
+
+        model.fit(
+            X_train,
+            y_train,
+        )
 
         predictions = {
             sample: model.predict(X).reshape(-1)
             for sample, (X, _) in model_arrays.items()
         }
-        metrics, prediction_frame = evaluate_model(
-            name, samples, predictions, TARGET, train_mean
-        )
-        if hasattr(model, "oob_score_"):
-            metrics["oob_r2_train"] = model.oob_score_
 
-        all_metrics.append(metrics)
-        all_predictions.append(prediction_frame)
+        metrics, prediction_frame = evaluate_model(
+            name,
+            samples,
+            predictions,
+            TARGET,
+            train_mean,
+        )
+
+        metrics["oob_pooled_mse_train"] = np.nan
+        metrics["oob_monthly_mse_train"] = np.nan
+        metrics["oob_r2_train"] = np.nan
+
+        if hasattr(model, "oob_prediction_"):
+            oob_prediction = np.asarray(
+                model.oob_prediction_
+            ).reshape(-1)
+
+            valid_oob = np.isfinite(
+                oob_prediction
+            )
+
+            oob_pooled_mse = mean_squared_error(
+                y_train[valid_oob],
+                oob_prediction[valid_oob],
+            )
+
+            oob_monthly_mse = monthly_mse(
+                y_train[valid_oob],
+                oob_prediction[valid_oob],
+                train_months[valid_oob],
+            )
+
+            metrics.loc[
+                metrics["sample"].eq("train"),
+                "oob_pooled_mse_train",
+            ] = oob_pooled_mse
+
+            metrics.loc[
+                metrics["sample"].eq("train"),
+                "oob_monthly_mse_train",
+            ] = oob_monthly_mse
+
+            metrics.loc[
+                metrics["sample"].eq("train"),
+                "oob_r2_train",
+            ] = model.oob_score_
+
+        all_metrics.append(
+            metrics
+        )
+
+        all_predictions.append(
+            prediction_frame
+        )
+
         all_importances.append(
             pd.DataFrame({
                 "model": name,
                 "predictor": predictors,
                 "importance": model.feature_importances_,
-            }).sort_values("importance", ascending=False)
+            }).sort_values(
+                "importance",
+                ascending=False,
+            )
         )
-        print(metrics.to_string(index=False))
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pd.concat(all_metrics, ignore_index=True).to_csv(
-        OUTPUT_DIR / "optimized_tree_model_metrics.csv", index=False
+        print(
+            metrics.to_string(
+                index=False
+            )
+        )
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
     )
-    pd.concat(all_predictions, ignore_index=True).to_parquet(
-        OUTPUT_DIR / "optimized_tree_model_predictions.parquet", index=False
+
+    pd.concat(
+        all_metrics,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR
+        / "optimized_tree_model_metrics.csv",
+        index=False,
     )
-    pd.concat(all_importances, ignore_index=True).to_csv(
-        OUTPUT_DIR / "optimized_tree_model_feature_importance.csv", index=False
+
+    pd.concat(
+        all_predictions,
+        ignore_index=True,
+    ).to_parquet(
+        OUTPUT_DIR
+        / "optimized_tree_model_predictions.parquet",
+        index=False,
+    )
+
+    pd.concat(
+        all_importances,
+        ignore_index=True,
+    ).to_csv(
+        OUTPUT_DIR
+        / "optimized_tree_model_feature_importance.csv",
+        index=False,
+    )
+
+    specifications.to_csv(
+        OUTPUT_DIR
+        / "optimized_tree_model_specifications.csv",
+        index=False,
+    )
+
+    print("\nSaved optimized tree-model outputs:")
+    print(
+        OUTPUT_DIR
+        / "optimized_tree_model_metrics.csv"
+    )
+    print(
+        OUTPUT_DIR
+        / "optimized_tree_model_predictions.parquet"
+    )
+    print(
+        OUTPUT_DIR
+        / "optimized_tree_model_feature_importance.csv"
+    )
+    print(
+        OUTPUT_DIR
+        / "optimized_tree_model_specifications.csv"
     )
 
 

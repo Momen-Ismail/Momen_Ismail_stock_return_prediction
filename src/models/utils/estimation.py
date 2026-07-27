@@ -86,13 +86,35 @@ def tune_grid(family, grid, make_model, data, predictors, folds, target=TARGET):
                 monthly_mse(y_validation, prediction, validation["month"])
             )
 
-        average_mse = np.mean(fold_scores)
+        fold_scores = np.asarray(
+            fold_scores,
+            dtype=float,
+        )
+
+        average_mse = fold_scores.mean()
+
+        mse_std = (
+            fold_scores.std(ddof=1)
+            if len(fold_scores) > 1
+            else 0.0
+        )
+
+        mse_se = (
+            mse_std / np.sqrt(len(fold_scores))
+            if len(fold_scores) > 0
+            else np.nan
+        )
+
         results.append({
             "model_family": family,
             "parameters": str(params),
             **params,
             "cv_monthly_mse": average_mse,
+            "cv_monthly_mse_std": mse_std,
+            "cv_monthly_mse_se": mse_se,
+            "cv_folds": len(fold_scores),
         })
+
         if average_mse < best_score:
             best_score = average_mse
             best_params = params

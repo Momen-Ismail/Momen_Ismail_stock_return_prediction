@@ -28,11 +28,19 @@ OUTPUT_DIR = MODEL_OUTPUT_DIR / "tuning"
 
 GRIDS = {
     "pls": {
-        "n_components": list(range(1, 11)),
+        "n_components": [1, 2, 3, 5],
     },
     "elastic_net": {
-    "alpha": [0.005, 0.0075, 0.01, 0.0125, 0.015, 0.02],
-    "l1_ratio": [0.85, 0.9, 0.95],
+        "alpha": [
+            0.01,
+            0.015,
+            0.02,
+        ],
+        "l1_ratio": [
+            0.75,
+            0.85,
+            0.9,
+        ],
     },
 }
 
@@ -55,8 +63,7 @@ def make_model(family, params):
                 alpha=float(params["alpha"]),
                 l1_ratio=float(params["l1_ratio"]),
                 max_iter=20_000,
-                tol=1e-3,
-                random_state=42,
+                tol=1e-4,
             ),
         )
 
