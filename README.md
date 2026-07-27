@@ -50,6 +50,53 @@ The final dataset contains:
 
 ---
 
+## Main documentation
+
+### Final paper
+
+[Open the final paper](documentation/pdf/Momen%20Ismail.pdf)
+
+```text
+documentation/pdf/Momen Ismail.pdf
+```
+
+The final paper contains the research question, methodology, model comparison,
+results, critical reflection, and conclusion.
+
+### Data Construction Guide
+
+[Open the Data Construction Guide](documentation/pdf/Data_Construction_Guide.pdf)
+
+```text
+documentation/pdf/Data_Construction_Guide.pdf
+```
+
+The Data Construction Guide provides the detailed technical documentation of
+the dataset, including:
+
+- the five data-construction scripts;
+- input files and data sources;
+- target construction;
+- timing and leakage controls;
+- the six-month Compustat availability lag;
+- the one-month Welch–Goyal lag;
+- monthly median imputation;
+- monthly 1st/99th percentile winsorization;
+- interaction construction;
+- final dataset validation and limitations.
+
+The editable LaTeX source is:
+
+```text
+documentation/documents/data_construction/Data_Construction_Guide.tex
+```
+
+The final paper should be used for the empirical results and conclusions. The
+Data Construction Guide should be consulted for detailed questions about data
+construction, variables, formulas, timing rules, merges, and preprocessing.
+
+---
+
 # Complete replication order
 
 All commands below must be run from the repository root.
