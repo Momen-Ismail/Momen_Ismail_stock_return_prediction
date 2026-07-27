@@ -1,318 +1,452 @@
 # Stock Return Prediction with Machine Learning
 
-This project builds a monthly stock-level dataset and compares machine-learning models for predicting next-month stock excess returns.
+**Author:** Momen Ismail  
+**Matriculation number:** 50307564  
+**Institutional email:** s73misma@uni-bonn.de  
+**Course:** Machine Learning for Finance  
+**University:** University of Bonn  
+**Instructor:** Prof. Ivan Gufler  
 
-For each stock \(i\) and month \(t\), information available by the end of month \(t\) is used to predict:
+**Repository:**  
+https://github.com/Momen-Ismail/stock-return-ml-project
+
+---
+
+## Project overview
+
+This repository contains the code, documentation, and empirical workflow for my
+Machine Learning for Finance course project.
+
+The project compares six models for predicting next-month stock excess returns:
+
+1. Historical Mean
+2. OLS-3
+3. Partial Least Squares
+4. Elastic Net
+5. Random Forest
+6. Gradient Boosting
+
+For stock \(i\) in month \(t\), the information available by the end of month
+\(t\) is used to predict:
 
 \[
-r_{i,t+1} - RF_{t+1},
+y_{i,t+1}=r_{i,t+1}-RF_{t+1},
 \]
 
-where \(r_{i,t+1}\) is the stock return in the following month and \(RF_{t+1}\) is the corresponding risk-free rate.
+where \(r_{i,t+1}\) is the stock return in the immediately following calendar
+month and \(RF_{t+1}\) is the corresponding monthly risk-free rate.
 
-The project covers:
+The final dataset contains:
 
-- data acquisition and cleaning;
-- predictor construction;
-- leakage-safe preprocessing;
-- fixed model estimation;
-- hyperparameter tuning;
-- validation-based model selection;
-- final out-of-sample testing;
-- model interpretation and reporting.
-
----
-
-## 1. Project workflow
-
-The project consists of two main stages:
-
-1. Data construction
-2. Model estimation and evaluation
+| Item | Value |
+|---|---:|
+| Stock-month observations | 211,059 |
+| Tickers | 656 |
+| Predictors | 484 |
+| Sample period | February 1990–December 2025 |
+| Missing predictor values | 0 |
+| Infinite predictor values | 0 |
+| Duplicate ticker-month rows | 0 |
 
 ---
 
-## 2. Data construction
+# Complete replication order
 
-The production data pipeline is located under:
+All commands below must be run from the repository root.
 
-```text
-src/data/
-```
-
-### Step 1: Build clean Yahoo Finance daily data
+The repository root is the directory containing:
 
 ```text
-01_build_clean_yahoo_daily.py
+README.md
+requirements.txt
+src/
+input/
+output/
+documentation/
 ```
 
-This step:
-
-- loads the locked stock universe;
-- downloads or reads daily Yahoo Finance stock data;
-- applies transparent daily price-quality filters;
-- removes unusable stock histories;
-- saves the clean daily stock-price panel.
-
-### Step 2: Build monthly stock characteristics
+The complete empirical workflow is:
 
 ```text
-02_build_monthly_stock_features.py
+Input preparation
+        ↓
+Data construction: Files 01–05
+        ↓
+Fixed model estimation
+        ↓
+Expanding-window hyperparameter tuning
+        ↓
+Validation-based specification selection
+        ↓
+Final model refitting and test evaluation
+        ↓
+Interpretation tables and figures
+        ↓
+PDF documentation
 ```
 
-This step:
+## 1. Clone the repository and install dependencies
 
-- aggregates daily prices to monthly observations;
-- constructs returns, momentum, volatility, liquidity, beta, and trend variables;
-- adds market and VIX information;
-- constructs the next-month excess-return target;
-- removes repeated poor-quality monthly histories.
+```bash
+git clone https://github.com/Momen-Ismail/stock-return-ml-project.git
+cd stock-return-ml-project
+python3 -m pip install -r requirements.txt
+```
 
-### Step 3: Add Compustat fundamentals and macroeconomic data
+## 2. Provide the restricted Compustat input
+
+A complete reconstruction from raw data requires the annual Compustat file:
 
 ```text
-03_add_fundamentals_and_macro.py
+input/raw/compustat_annual_1980_2025.csv
 ```
 
-This step:
+The Compustat data were obtained through WRDS and are subject to licensing
+restrictions. The raw file is therefore not intended for public redistribution.
 
-- cleans annual Compustat observations;
-- constructs accounting characteristics;
-- applies a conservative six-month reporting lag;
-- uses a backward as-of merge to assign the latest available accounting report to each stock-month;
-- invalidates accounting observations that have become too stale;
-- adds lagged macroeconomic and Fama–French variables.
-
-### Step 4: Build the raw Kelly-style dataset
+The Compustat path defined in:
 
 ```text
-04_build_raw_kelly_dataset.py
+src/config.py
 ```
 
-This step:
+is authoritative. The required file must be placed at that location before
+running Data File 03.
 
-- adds SIC2 industry controls;
-- adds eight Welch–Goyal aggregate state variables;
-- creates stock-characteristic × macro-state interactions;
-- combines stock, market, macroeconomic, and accounting predictors.
+## 3. Rebuild the Welch–Goyal input when necessary
 
-### Step 5: Clean and rank-normalize the final dataset
+The cleaned Welch–Goyal file is already a permanent project input. To rebuild it
+from the original workbook, run:
+
+```bash
+python3 src/acquisition/04_create_welch_goyal_input.py
+```
+
+This command reads:
 
 ```text
-05_clean_and_rank_normalize.py
+input/raw/PredictorData2025.xlsx
 ```
 
-This step:
-
-- drops observations without a valid target;
-- documents target outliers;
-- imputes missing predictors using monthly cross-sectional medians;
-- rank-normalizes continuous predictors within each month;
-- saves the final model-ready panel;
-- saves the authoritative predictor list and cleaning summary.
-
----
-
-## 3. Timing and leakage controls
-
-The project uses several controls to prevent look-ahead bias.
-
-### Target timing
-
-A row dated month \(t\) contains information available by the end of month \(t\) and predicts the excess return in month \(t+1\).
-
-### Accounting information
-
-Compustat `datadate` is the fiscal-year-end date, not the date on which the information became public.
-
-Annual Compustat observations are therefore treated as available only after a six-month reporting lag.
-
-For each stock-month, the merge uses the most recent report whose availability date is not later than the stock month.
-
-### Macroeconomic information
-
-Welch–Goyal and other macroeconomic variables are lagged before entering the predictor set.
-
-### Cross-sectional preprocessing
-
-Monthly imputation and rank normalization use only firms observed in the same month.
-
-No future month is used when preprocessing an observation.
-
-### Chronological samples
-
-The modeling workflow uses the following chronological samples:
+and creates:
 
 ```text
-Training:     February 1990 – December 2014
-Validation:   January 2015 – December 2019
-Development:  February 1990 – December 2019
-Test:         January 2020 – December 2025
+input/external/welch_goyal_macro_1990_2025.csv
 ```
 
-The test period is not used for model selection or hyperparameter tuning.
+## 4. Run the data-construction pipeline
 
-January 2026 price information may be used only to realize the December 2025 next-month target. Final predictor rows end in December 2025.
+Run the following scripts in numerical order:
 
----
+```bash
+python3 src/data/01_build_clean_yahoo_daily.py
+python3 src/data/02_build_monthly_stock_features.py
+python3 src/data/03_add_fundamentals_and_macro.py
+python3 src/data/04_build_raw_kelly_dataset.py
+python3 src/data/05_clean_and_rank_normalize.py
+```
 
-## 4. Model workflow
+The script name `05_clean_and_rank_normalize.py` is retained from an earlier
+version of the project. The final implementation does **not** rank-normalize the
+predictors. It applies monthly median imputation and monthly 1st/99th percentile
+winsorization to the continuous stock-characteristic block.
 
-The modeling code is located under:
+The direct execution of the five numbered scripts is the authoritative
+data-construction procedure.
+
+## 5. Run the fixed models
+
+```bash
+python3 src/models/step_01_fixed/01_fixed_linear_models.py
+python3 src/models/step_01_fixed/02_fixed_tree_models.py
+python3 src/models/step_01_fixed/03_compare_fixed_models.py
+```
+
+An additional diagnostic script is available:
+
+```bash
+python3 src/models/step_01_fixed/04_diagnose_fixed_models.py
+```
+
+This stage estimates the initial fixed specifications using the training sample
+and evaluates them on the 2015–2019 validation period.
+
+## 6. Run expanding-window hyperparameter tuning
+
+```bash
+python3 src/models/step_02_tuning/01_tune_linear_models.py
+python3 src/models/step_02_tuning/02_tune_tree_models.py
+python3 src/models/step_02_tuning/03_compare_tuning_results.py
+```
+
+Tuning uses ten annual expanding-window folds:
 
 ```text
-src/models/
+Train through 2004 → validate on 2005
+Train through 2005 → validate on 2006
+...
+Train through 2013 → validate on 2014
 ```
 
-### Step 1: Fixed models
+The main tuning criterion is average fold-level monthly mean squared error.
 
-```text
-src/models/step_01_fixed/
-```
-
-This stage estimates the initial fixed model specifications:
-
-- Historical Mean
-- OLS-3
-- Partial Least Squares
-- Elastic Net
-- Random Forest
-- Gradient Boosting
-
-These specifications provide baseline results before tuning.
-
-### Step 2: Hyperparameter tuning
-
-```text
-src/models/step_02_tuning/
-```
-
-Hyperparameters are selected using annual expanding-window validation folds inside the training period.
-
-The primary tuning criterion is average monthly mean squared error.
-
-The tuned parameters are:
+The parameters considered are:
 
 - PLS: number of components;
 - Elastic Net: `alpha` and `l1_ratio`;
 - Random Forest: number of trees;
-- Gradient Boosting: number of trees, learning rate, and maximum depth.
+- Gradient Boosting: number of trees, learning rate, and tree depth.
 
-### Step 3: Optimized-model comparison
+## 7. Run the optimized models and validation comparison
 
-```text
-src/models/step_03_optimization/
+```bash
+python3 src/models/step_03_optimization/01_optimized_linear_models.py
+python3 src/models/step_03_optimization/02_optimized_tree_models.py
+python3 src/models/step_03_optimization/03_compare_optimized_models.py
+python3 src/models/step_03_optimization/04_compare_fixed_vs_optimized.py
 ```
 
-This stage:
+This stage estimates the tuned candidates on the complete training sample and
+compares them with the fixed versions on the separate 2015–2019 validation
+period.
 
-- estimates tuned models on the training sample;
-- evaluates them on the 2015–2019 validation period;
-- ranks models using validation monthly MSE;
-- compares fixed and optimized specifications;
-- locks the final model specifications before the test sample is evaluated.
+The final validation-based choices are:
 
-### Step 4: Final test evaluation
+| Model family | Final specification |
+|---|---|
+| PLS | Optimized, 2 components |
+| Elastic Net | Optimized, `alpha = 0.015`, `l1_ratio = 0.85` |
+| Random Forest | Fixed, 100 trees |
+| Gradient Boosting | Fixed, 100 trees, learning rate 0.01, depth 2 |
 
-```text
-src/models/step_04_test/
+The tuned 300-tree Random Forest and Gradient Boosting specifications were not
+used in the final test because they did not improve validation monthly MSE
+relative to the fixed 100-tree versions.
+
+## 8. Run the official final-test evaluation
+
+```bash
+python3 src/models/step_04_test/01_final_test_evaluation.py
 ```
 
-The final model specifications are refitted on the complete development sample from February 1990 through December 2019.
+This script:
 
-They are then evaluated once on the untouched test period from January 2020 through December 2025.
+1. loads the locked final specifications;
+2. combines the training and validation periods into the development sample;
+3. refits all six models using February 1990–December 2019;
+4. predicts the untouched January 2020–December 2025 test period;
+5. saves the official test metrics and predictions.
 
-The main evaluation measures are:
+The test sample is not used for tuning or specification selection.
 
-- monthly MSE;
-- monthly RMSE;
-- monthly out-of-sample \(R^2\);
-- pooled MSE;
-- pooled RMSE;
-- pooled MAE;
-- pooled out-of-sample \(R^2\);
-- prediction-target correlation.
+Re-running this script with the locked specifications is a replication exercise.
+The test results should not be used to change the model specifications.
 
-The historical mean is the benchmark used to calculate out-of-sample \(R^2\).
-
-### Step 5: Interpretation and reporting
-
-```text
-src/models/step_05_interpretation/
-```
-
-This stage reads the saved final-test outputs and creates:
-
-- model-performance summaries;
-- yearly test results;
-- prediction-bias and prediction-dispersion measures;
-- standardized linear-model coefficients;
-- Elastic Net variable-selection summaries;
-- PLS component summaries;
-- Random Forest feature importance;
-- Gradient Boosting feature importance;
-- predictor-family importance;
-- report-ready CSV tables;
-- a formatted Excel workbook;
-- final figures.
-
-This stage does not tune, select, or refit models.
-
-Run the complete interpretation stage with:
+## 9. Generate the interpretation outputs
 
 ```bash
 python3 src/models/step_05_interpretation/run_all.py
 ```
 
----
+This stage reads the saved official test outputs and generates:
 
-## 5. Required inputs
+- final model-comparison tables;
+- yearly performance results;
+- prediction summaries;
+- standardized linear-model coefficients;
+- Elastic Net selection summaries;
+- PLS summaries;
+- Random Forest feature importance;
+- Gradient Boosting feature importance;
+- predictor-group importance;
+- report-ready CSV files;
+- a formatted Excel workbook;
+- final figures.
 
-The main permanent input files include:
+This stage does not tune, select, or refit the models.
 
-```text
-input/raw/compustat_annual_1980_2025.csv
-input/raw/PredictorData2025.xlsx
-input/stock_universe_locked.csv
-input/fama_french_rf_monthly.csv
-input/market_gspc_daily.csv
-input/market_vix_daily.csv
-input/external/welch_goyal_macro_1990_2025.csv
-```
-
-One-time acquisition scripts are located under:
-
-```text
-src/acquisition/
-```
-
-Normal production runs use the locked local inputs and do not repeatedly download Wikipedia, Fama–French, GSPC, VIX, or Welch–Goyal data.
-
----
-
-## 6. Installation
-
-Install the required Python packages from the project root:
+## 10. Build the documentation
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 src/documentation/build_documents.py
+```
+
+The main compiled documents are written to:
+
+```text
+documentation/pdf/
 ```
 
 ---
 
-## 7. Running the data pipeline
+# Important documentation
 
-Run the complete data-construction pipeline from the project root:
+## Final paper
 
-```bash
-./run_pipeline.sh
+**PDF:**
+
+[Open the final paper](documentation/pdf/Momen%20Ismail.pdf)
+
+```text
+documentation/pdf/Momen Ismail.pdf
 ```
 
-The script executes the production data steps in the correct order.
+**LaTeX source:**
+
+```text
+documentation/documents/thesis/paper.tex
+```
+
+The paper contains the research question, data summary, methodology, results,
+critical reflection, and conclusion.
+
+## Data Construction Guide
+
+**PDF:**
+
+[Open the Data Construction Guide](documentation/pdf/Data_Construction_Guide.pdf)
+
+```text
+documentation/pdf/Data_Construction_Guide.pdf
+```
+
+**LaTeX source:**
+
+```text
+documentation/documents/data_construction/Data_Construction_Guide.tex
+```
+
+The Data Construction Guide provides the detailed technical documentation of:
+
+- the five data-construction scripts;
+- permanent and restricted inputs;
+- stock-return and predictor formulas;
+- daily and monthly quality filters;
+- target construction;
+- the exact-next-calendar-month condition;
+- the six-month Compustat availability lag;
+- the one-month Welch–Goyal lag;
+- monthly median imputation;
+- monthly 1st/99th percentile winsorization;
+- interaction construction;
+- final dataset validation;
+- remaining data limitations.
+
+The paper should be used for the empirical conclusions. The Data Construction
+Guide should be used for detailed questions about variables, timing rules,
+merges, cleaning decisions, and the construction of the final panel.
 
 ---
 
-## 8. Main data outputs
+# Data-construction stages
+
+## File 01: Daily Yahoo Finance data
+
+```text
+src/data/01_build_clean_yahoo_daily.py
+```
+
+This script:
+
+- reads the locked stock universe;
+- downloads or loads daily Yahoo Finance data;
+- checks OHLCV consistency;
+- removes invalid observations;
+- removes unusable ticker histories;
+- saves the cleaned daily stock panel and quality reports.
+
+## File 02: Monthly stock characteristics and target
+
+```text
+src/data/02_build_monthly_stock_features.py
+```
+
+This script:
+
+- aggregates daily observations to stock-month observations;
+- calculates monthly returns;
+- calculates momentum variables;
+- constructs volatility and liquidity variables;
+- adds market and VIX information;
+- calculates beta and idiosyncratic volatility;
+- constructs the next-month excess-return target.
+
+The target is retained only when the next observation for the same ticker is the
+immediately following calendar month.
+
+## File 03: Compustat fundamentals
+
+```text
+src/data/03_add_fundamentals_and_macro.py
+```
+
+This script:
+
+- cleans annual Compustat observations;
+- creates accounting characteristics;
+- assigns an availability date six months after fiscal-year end;
+- performs a backward as-of merge;
+- prevents future reports from entering earlier stock months;
+- invalidates accounting observations that have become too stale.
+
+## File 04: Kelly-style base dataset
+
+```text
+src/data/04_build_raw_kelly_dataset.py
+```
+
+This script:
+
+- adds SIC2 industry indicators;
+- merges the eight Welch–Goyal variables;
+- applies the one-month Welch–Goyal lag;
+- freezes the 124 base predictors.
+
+## File 05: Final preprocessing and interactions
+
+```text
+src/data/05_clean_and_rank_normalize.py
+```
+
+This script:
+
+- removes the initial month without lagged macro information;
+- imputes continuous characteristics using same-month medians;
+- winsorizes continuous characteristics at the monthly 1st and 99th percentiles;
+- preserves binary variables as binary;
+- creates 360 characteristic–macro interactions;
+- saves the final model-ready dataset;
+- saves the authoritative predictor list;
+- performs the final quality checks.
+
+---
+
+# Final dataset and predictor design
+
+The final 484 predictors consist of:
+
+| Predictor block | Number |
+|---|---:|
+| Continuous stock characteristics | 45 |
+| Binary stock characteristics | 3 |
+| Market and VIX variables | 4 |
+| Welch–Goyal variables | 8 |
+| SIC2 industry indicators | 64 |
+| Characteristic–macro interactions | 360 |
+| **Total** | **484** |
+
+The 360 interactions are created as:
+
+\[
+45\text{ continuous characteristics}
+\times
+8\text{ macro states}
+=
+360.
+\]
+
+Binary characteristics, market variables, macro variables, and industry
+indicators are not interacted.
 
 The final model-ready dataset is:
 
@@ -326,52 +460,34 @@ The authoritative predictor list is:
 output/data/final/006_predictor_columns_kelly_winsorized.csv
 ```
 
-The cleaning summary is:
+The final cleaning summary is:
 
 ```text
 output/quality/006_cleaning_summary.csv
 ```
 
-The current final dataset contains:
+---
 
-- 211,059 stock-month observations;
-- 656 tickers;
-- 484 predictors;
-- observations from February 1990 through December 2025;
-- no missing predictor values;
-- no infinite values;
-- no duplicated stock-month rows.
+# Chronological sample design
 
-The predictor set includes:
+| Sample | Period | Observations | Role |
+|---|---|---:|---|
+| Training | February 1990–December 2014 | 131,061 | Fixed estimation and tuning |
+| Validation | January 2015–December 2019 | 35,386 | Fixed-versus-optimized comparison |
+| Development | February 1990–December 2019 | 166,447 | Final model refitting |
+| Test | January 2020–December 2025 | 44,612 | Official final evaluation |
 
-- stock characteristics;
-- accounting characteristics;
-- market and VIX variables;
-- Welch–Goyal state variables;
-- SIC2 industry indicators;
-- stock-characteristic × macro-state interactions.
+Random train-test splitting is not used.
+
+January 2026 price information may be used only to realize the next-month target
+for December 2025 predictor observations. The final predictor sample ends in
+December 2025.
 
 ---
 
-## 9. Main model outputs
+# Main outputs
 
-Model outputs are written under:
-
-```text
-output/models/
-```
-
-Important subfolders include:
-
-```text
-output/models/fixed/
-output/models/tuning/
-output/models/optimization/
-output/models/test/
-output/models/interpretation/
-```
-
-The final test outputs include:
+## Final-test outputs
 
 ```text
 output/models/test/final_test_metrics.csv
@@ -379,7 +495,13 @@ output/models/test/final_test_model_comparison.csv
 output/models/test/final_test_predictions.parquet
 ```
 
-The final interpretation outputs include:
+The main final ranking is stored in:
+
+```text
+output/models/test/final_test_model_comparison.csv
+```
+
+## Interpretation outputs
 
 ```text
 output/models/interpretation/final_prediction_results.csv
@@ -390,70 +512,93 @@ output/models/interpretation/final_report_results.xlsx
 output/models/interpretation/figures/
 ```
 
----
-
-## 10. Documentation
-
-Editable documentation sources are stored under:
-
-```text
-documentation/documents/
-```
-
-The main documents are:
-
-```text
-documentation/documents/thesis/paper.tex
-documentation/documents/thesis/references.bib
-documentation/documents/data_construction/Data_Construction_Guide.tex
-documentation/documents/audit/full_project_audit.tex
-documentation/documents/audit/full_project_audit.md
-```
-
-Generated document assets are stored under:
+## Report figures
 
 ```text
 documentation/figures/
-documentation/tables/
 ```
-
-Final compiled PDFs are written under:
-
-```text
-documentation/pdf/
-```
-
-Build all standalone LaTeX documents with:
-
-```bash
-python3 src/documentation/build_documents.py
-```
-
-The separate pipeline-overview PDF is not retained.
-
-A concise operational overview is included in this README. Detailed technical construction decisions are documented in the Data Construction Guide, while the academic methodology and results are presented in the thesis.
 
 ---
 
-## 11. Project structure
+# Main empirical result
+
+| Rank | Model | Monthly out-of-sample \(R^2\) |
+|---:|---|---:|
+| 1 | Random Forest | 1.1427% |
+| 2 | OLS-3 | 0.0301% |
+| 3 | Elastic Net | approximately 0.0000% |
+| 4 | Historical Mean | 0.0000% |
+| 5 | Partial Least Squares | -0.6363% |
+| 6 | Gradient Boosting | -0.9192% |
+
+Random Forest produces the lowest average monthly MSE in the 2020–2025 test
+sample and reduces squared forecast error by approximately 1.14% relative to the
+historical-mean benchmark.
+
+The improvement is modest and is not stable across every test year. The project
+therefore interprets the result as limited statistical predictability rather
+than evidence of a profitable trading strategy.
+
+---
+
+# Timing and leakage controls
+
+The main timing rules are:
+
+- a month-\(t\) row predicts the stock's return in month \(t+1\);
+- the target requires the exact next calendar month;
+- momentum variables use lagged returns;
+- Compustat information becomes available six months after fiscal-year end;
+- accounting data are merged backward using only reports already considered
+  available;
+- Welch–Goyal variables are lagged by one month;
+- imputation and winsorization use only the same month's cross-section;
+- model standardization is fitted only on the relevant training sample;
+- hyperparameter tuning uses chronological expanding windows;
+- the 2020–2025 test sample is excluded from all model-selection decisions.
+
+---
+
+# Repository structure
 
 ```text
-stock_return_ml_project_clean/
+stock-return-ml-project/
 ├── input/
+│   ├── raw/
+│   ├── external/
+│   └── stock_universe_locked.csv
+│
 ├── output/
+│   ├── data/
+│   │   ├── staging/
+│   │   └── final/
+│   ├── quality/
+│   └── models/
+│       ├── fixed/
+│       ├── tuning/
+│       ├── optimization/
+│       ├── test/
+│       └── interpretation/
+│
 ├── documentation/
 │   ├── documents/
-│   │   ├── audit/
-│   │   ├── data_construction/
-│   │   └── thesis/
+│   │   ├── thesis/
+│   │   └── data_construction/
 │   ├── figures/
 │   ├── tables/
 │   └── pdf/
+│
 ├── src/
 │   ├── acquisition/
 │   ├── data/
-│   ├── documentation/
-│   └── models/
+│   ├── models/
+│   │   ├── step_01_fixed/
+│   │   ├── step_02_tuning/
+│   │   ├── step_03_optimization/
+│   │   ├── step_04_test/
+│   │   └── step_05_interpretation/
+│   └── documentation/
+│
 ├── README.md
 ├── requirements.txt
 └── run_pipeline.sh
@@ -461,36 +606,38 @@ stock_return_ml_project_clean/
 
 ---
 
-## 12. Reproducibility
+# Reproducibility note
 
-The production pipeline separates:
+The complete raw-data reconstruction requires access to the licensed Compustat
+input.
 
-- permanent raw inputs;
-- intermediate data;
+The project separates:
+
+- permanent inputs;
+- restricted inputs;
+- intermediate datasets;
 - final model-ready data;
-- model outputs;
+- model-selection outputs;
+- official test outputs;
 - interpretation outputs;
-- documentation sources;
-- generated reports.
+- documentation.
 
-The scripts contain data-construction, estimation, evaluation, and reporting logic.
+The authoritative empirical order is:
 
-Manual exploratory checks and obsolete scripts are excluded from the production workflow.
+```text
+Data Files 01–05
+→ Fixed models
+→ Expanding-window tuning
+→ Validation comparison
+→ Locked final specifications
+→ Development-sample refitting
+→ One-time test evaluation
+→ Interpretation
+→ Documentation
+```
 
-The final test period must remain untouched after the official final evaluation. Test results must not be used to retune models or select alternative specifications.
+The predictor list saved beside the final dataset is authoritative and should
+not be reconstructed manually.
 
----
-
-## 13. Interpretation caution
-
-The project is designed for prediction rather than causal inference.
-
-Linear-model coefficients describe conditional predictive associations after predictor standardization.
-
-PLS coefficients summarize predictive relationships through latent components and should be interpreted cautiously.
-
-Tree impurity importance measures how variables contribute to reductions in squared error within fitted trees. It may favor predictors with more possible split points.
-
-Neither coefficients nor feature-importance measures should be interpreted as causal effects.
-
-Monthly stock returns are noisy, predictor relationships may vary across market regimes, and small positive out-of-sample improvements should not be overstated.
+The official test results must not be used to retune the models or select
+alternative specifications.

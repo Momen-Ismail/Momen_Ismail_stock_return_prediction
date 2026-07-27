@@ -6,17 +6,27 @@
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
-\usepackage[a4paper,top=2.1cm,bottom=2.25cm,left=2.35cm,right=2.35cm]{geometry}
+
+\usepackage[
+  a4paper,
+  top=1.9cm,
+  bottom=2.0cm,
+  left=2.1cm,
+  right=2.1cm
+]{geometry}
+
 \usepackage{microtype}
 \usepackage{setspace}
-\setstretch{1.08}
+
+\setstretch{1.03}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0.48em}
+\setlength{\parskip}{0.32em}
 \setlength{\emergencystretch}{2em}
 
 % ============================================================
-% Mathematics, tables, and figures
+% Mathematics, tables and figures
 % ============================================================
+
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{tabularx}
@@ -39,27 +49,28 @@
 \setlist[enumerate]{leftmargin=1.55em,itemsep=0.15em,topsep=0.2em}
 
 % ============================================================
-% Colors, captions, and links
+% Colors, captions and hyperlinks
 % ============================================================
+
 \usepackage{xcolor}
+
 \definecolor{linkblue}{RGB}{28,72,122}
-\definecolor{lightgray}{RGB}{245,246,248}
 
 \usepackage[
-  font=small,
-  labelfont=bf,
-  justification=centering,
-  singlelinecheck=false,
-  skip=6pt
+font=small,
+labelfont=bf,
+justification=centering,
+singlelinecheck=false,
+skip=6pt
 ]{caption}
 
 \usepackage[
-  colorlinks=true,
-  linkcolor=linkblue,
-  citecolor=linkblue,
-  urlcolor=linkblue,
-  pdfauthor={Momen Ismail},
-  pdftitle={Comparing Machine Learning Models for Monthly Stock Return Prediction}
+colorlinks=true,
+linkcolor=linkblue,
+citecolor=linkblue,
+urlcolor=linkblue,
+pdfauthor={Momen Ismail},
+pdftitle={Comparing Machine Learning Models for Monthly Stock Return Prediction}
 ]{hyperref}
 
 \usepackage[nameinlink,noabbrev]{cleveref}
@@ -67,23 +78,28 @@
 % ============================================================
 % Bibliography
 % ============================================================
+
 \usepackage{csquotes}
+
 \usepackage[
-  backend=biber,
-  style=authoryear,
-  maxcitenames=2,
-  giveninits=true,
-  uniquename=init,
-  doi=false,
-  url=false,
-  isbn=false
+backend=biber,
+style=authoryear,
+maxcitenames=2,
+giveninits=true,
+uniquename=init,
+doi=false,
+url=false,
+isbn=false
 ]{biblatex}
+
 \addbibresource{references.bib}
 
 % ============================================================
-% Header and section style
+% Header
 % ============================================================
+
 \usepackage{fancyhdr}
+
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{Machine Learning for Finance}
@@ -92,39 +108,105 @@
 \renewcommand{\headrulewidth}{0.4pt}
 \setlength{\headheight}{14pt}
 
+% ============================================================
+% Section style
+% ============================================================
+
 \usepackage{titlesec}
-\titleformat{\section}{\large\bfseries}{\thesection}{0.65em}{}
-\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.60em}{}
-\titlespacing*{\section}{0pt}{1.25em}{0.4em}
-\titlespacing*{\subsection}{0pt}{0.9em}{0.2em}
+
+\titleformat{\section}
+{\large\bfseries}
+{\thesection}
+{0.65em}
+{}
+
+\titleformat{\subsection}
+{\normalsize\bfseries}
+{\thesubsection}
+{0.60em}
+{}
+
+\titlespacing*{\section}{0pt}{1.0em}{0.25em}
+\titlespacing*{\subsection}{0pt}{0.70em}{0.12em}
+
 \setcounter{secnumdepth}{2}
 
 % ============================================================
 % Project paths
 % ============================================================
+
 \newcommand{\FigurePath}{../../figures}
 \newcommand{\papertitle}{Comparing Machine Learning Models for Monthly Stock Return Prediction}
 
 % ============================================================
 % Document
 % ============================================================
+
 \begin{document}
 
-\begin{center}
-  {\LARGE\bfseries \papertitle\par}
-  \vspace{0.35em}
-  {\large Course Project Report\par}
-  \vspace{0.65em}
-  {\large Momen Ismail\par}
-  \vspace{0.2em}
-  {Machine Learning for Finance, University of Bonn\par}
-  {Instructor: Prof. Ivan Gufler\par}  \vspace{0.3em}
-  {\today\par}
-\end{center}
+% ============================================================
+% Title page (excluded from the 15-page limit)
+% ============================================================
 
-\vspace{0.55em}
-\hrule
-\vspace{0.75em}
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+
+\vspace*{2.2cm}
+
+{\LARGE\bfseries
+\papertitle
+\par}
+
+\vspace{1.2cm}
+
+{\Large Course Project Report\par}
+
+\vspace{1.4cm}
+
+{\large
+Momen Ismail\par
+}
+
+\vspace{0.35cm}
+
+{\large
+Matriculation Number: 50307564\par
+}
+
+\vspace{0.35cm}
+
+{\large
+Institutional Email:\\[0.15cm]
+\texttt{\href{mailto:s73misma@uni-bonn.de}{s73misma@uni-bonn.de}}
+\par
+}
+
+\vspace{1.2cm}
+
+{\large
+Machine Learning for Finance\par
+University of Bonn\par
+Instructor: Prof. Ivan Gufler
+\par
+}
+
+\vfill
+
+\textbf{GitHub Repository}
+
+\vspace{0.25cm}
+
+\url{https://github.com/Momen-Ismail/stock-return-ml-project}
+
+\vfill
+
+27 July 2026
+
+\end{titlepage}
+
+\clearpage
+\pagenumbering{arabic}
 
 \begin{abstract}
 This project compares six models for predicting next-month stock excess
@@ -1052,104 +1134,379 @@ because that would use the test sample for a second model-selection exercise.
 % ============================================================
 % 5. Critical Reflection
 % ============================================================
+
 \section{Critical Reflection}
 \label{sec:critical-reflection}
 
-\subsection{What worked}
+This project involved more than estimating and comparing six models. A large
+part of the work was identifying problems in the data pipeline, checking whether
+the timing rules were realistic, and deciding which results could be treated as
+final. In this section, I discuss the main problems I encountered, how I dealt
+with them, and which limitations remain despite the corrections.
 
-The chronological design is one of the strongest parts of the project. The
-models are tuned using expanding windows, fixed and optimized versions are
-compared on a later validation period, and the final test period is kept
-separate from these choices. This is more realistic than a random split for
-financial time-series data.
+\subsection{Problems encountered and how I addressed them}
 
-The comparison also produces useful negative results. Elastic Net selects no
-variables, PLS underperforms, and Gradient Boosting performs worse than the
-benchmark. These outcomes show that more predictors and more flexible models do
-not automatically improve forecasts.
+\begin{table}[H]
+\centering
+\caption{Main project problems, solutions, and remaining limitations}
+\label{tab:problems-solutions}
 
-Random Forest is the only model with a clear positive full-period result. Its
-ability to use nonlinearities and interactions appears useful, especially when
-firm characteristics are combined with aggregate states.
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 
-\subsection{Main limitations}
+\begin{tabularx}
+{\textwidth}
+{>{\raggedright\arraybackslash}p{2.8cm}
+ >{\raggedright\arraybackslash}X
+ >{\raggedright\arraybackslash}X}
+\toprule
+Problem
+& Action taken
+& How far the solution goes \\
+\midrule
 
-The first limitation is the stock universe. The project uses a locked S\&P
-500-style ticker list, not a fully point-in-time CRSP constituent universe.
-Ticker changes, mergers, delistings, and historical membership may therefore
-create survivorship or selection bias.
+Nonconsecutive return targets
+&
+An earlier target construction used the next available observation for each
+ticker. This could incorrectly treat a return across a gap of several months as
+a one-month return. I added a condition requiring the next observation to be
+the exact following calendar month and rebuilt the final panel.
+&
+This fully solves the calendar-gap problem inside the available monthly
+histories. It does not recover returns for months that are completely missing or
+delisting returns that are unavailable in Yahoo Finance.
+\\[0.3em]
 
-Second, Yahoo Finance is convenient but does not provide the security master,
-delisting returns, and microstructure detail available in CRSP. Adjusted prices
-can also be revised. Compustat is lagged by six months, but exact filing dates
-are not used.
+Timing of Welch--Goyal variables
+&
+An earlier version merged Welch--Goyal variables in the same month as the
+stock predictors. I shifted these variables by one month so that stock month
+\(t\) uses the macroeconomic state from month \(t-1\).
+&
+This removes the identified same-month timing problem and makes the rule more
+conservative. It does not reproduce the exact historical publication date of
+every macroeconomic series.
+\\[0.3em]
 
-Third, the target has large outliers. The maximum monthly excess return is much
-larger than a typical observation, so MSE can be strongly affected by rare
-returns. Reporting MAE helps, but the main ranking still depends on squared
-loss.
+Timing of accounting information
+&
+Compustat \texttt{datadate} is the fiscal-year-end date, not the publication
+date. I treated each report as available six months after fiscal-year end,
+merged it backward to the most recent available report, and prevented very old
+reports from being carried forward indefinitely.
+&
+The procedure substantially reduces look-ahead bias. However, the six-month
+delay is still an approximation because exact filing dates are not used.
+\\[0.3em]
 
-Fourth, the test period contains only six years and includes unusual market
-conditions. The yearly figure shows that the Random Forest improvement is not
-stable across the full period.
+Missing and extreme predictor values
+&
+I replaced missing continuous characteristics with the cross-sectional median
+of the same month and winsorized these characteristics at the monthly 1st and
+99th percentiles. I also applied transparent daily and monthly quality filters
+to remove unusable price histories.
+&
+The final panel contains no missing predictors, infinite values, or duplicate
+ticker-month observations. Winsorization limits extreme predictor values, but
+the return target remains raw and still contains very large observations.
+\\[0.3em]
 
-Fifth, the project does not test statistical significance of loss differences.
-Random Forest ranks first, but the difference from OLS-3 may not be statistically
-significant after accounting for time dependence and comparison across several
-models.
+Inconsistent documentation
+&
+Earlier documentation described rank normalization, 499 predictors, and an
+active Decision Tree. These statements no longer matched the final code. I used
+the final repository audit and the authoritative output files to reconcile the
+paper with the implemented pipeline.
+&
+This solves the inconsistency once the paper, README, and Data Construction
+Guide are all updated. It does not change the numerical results, but it is
+important for making the project understandable and reproducible.
+\\[0.3em]
 
-Finally, the project does not evaluate cross-sectional portfolio performance.
-A useful additional metric would remove each month's average return and test
-whether the model predicts which stocks perform relatively better or worse
-within the month. A separate portfolio analysis could then sort stocks by
-predicted returns and report returns, Sharpe ratios, turnover, and transaction
-costs.
+
+Computational cost of tree tuning
+&
+Gradient Boosting tuning was very slow because the model fits trees
+sequentially across several annual folds. The final specification was chosen
+using the separate validation comparison rather than accepting the largest
+tuned model.
+&
+The project reached a usable final specification, but the full tuning process
+would be more reproducible if every completed candidate and fold were saved as
+a checkpoint.
+\\
+
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The first two issues were particularly important because they could create
+look-ahead bias or an incorrect target. After correcting them, I rebuilt the
+final data and repeated the later modeling stages. The final panel therefore
+uses only consecutive one-month targets and one-month-lagged Welch--Goyal
+states.
+
+The accounting solution is less complete. The six-month lag is a practical and
+conservative rule, but it does not provide the same precision as exact filing
+dates. I therefore treat this as a limitation that has been reduced rather than
+fully removed.
+
+\subsection{What worked well}
+
+The strongest methodological decision was the chronological sample design. I
+used expanding training windows instead of random cross-validation, compared
+fixed and optimized models in a later validation period, and opened the final
+test only after the specifications had been chosen.
+
+This structure was useful because it revealed that tuning results from an
+earlier period do not necessarily transfer to a later period. The 300-tree
+Random Forest and Gradient Boosting candidates performed better within the
+training-stage tuning exercise, but worse than their 100-tree versions in the
+2015--2019 validation sample. Without the separate validation period, I would
+have selected unnecessarily complex final models.
+
+The use of a historical-mean benchmark also worked well. It made the
+interpretation direct: a model only provides value under the chosen loss
+function if it reduces forecast error relative to a simple constant prediction.
+
+The project also produced useful negative results. Elastic Net selected no
+variables, PLS underperformed the benchmark, and Gradient Boosting produced the
+worst final test result. These findings are informative because they show that
+large predictor sets, regularization, dimension reduction, and nonlinear models
+do not automatically generate better forecasts.
+
+\subsection{What the model failures taught me}
+
+Elastic Net shrinks all 484 coefficients to zero. At first, this result looked
+like a possible implementation error. After checking the fitted coefficients,
+predictions, validation results, and benchmark, I concluded that it is a valid
+model outcome. Under the selected penalty, the model preferred a constant
+forecast rather than unstable linear effects.
+
+This result does not mean that all stock characteristics are always irrelevant.
+It means that the selected Elastic Net specification did not find sufficiently
+stable linear information to improve on the historical mean under this sample
+and chronology.
+
+PLS presents a different failure. Reducing the 484 predictors to two supervised
+components improved validation performance relative to the fixed
+20-component version. Nevertheless, it underperformed the benchmark in the
+final test. This shows that dimension reduction can control complexity without
+guaranteeing that the estimated components remain useful in a later market
+period.
+
+Gradient Boosting also illustrates the danger of model flexibility. The model
+sequentially corrects earlier errors, but these corrections may fit unstable
+patterns. Its negative test out-of-sample \(R^2\) and negative correlation
+suggest that the estimated relationships did not transfer successfully to the
+test period.
+
+Random Forest is the only complex model with a clear positive full-period
+result. Averaging many randomized trees appears to be more effective than
+sequential boosting in this sample. However, its success is not stable across
+years, so I do not interpret it as a universal relationship.
+
+\subsection{Limits of the Random Forest result}
+
+Random Forest reduces average monthly squared forecast error by approximately
+\(1.14\%\), but it has a positive annual out-of-sample \(R^2\) in only one of
+the six test years. Its strong performance in 2020 has a large effect on the
+full-period ranking.
+
+OLS-3 produces a much smaller total improvement, but it is positive in four of
+the six years. This comparison shows that there are at least two ways to assess
+a model:
+
+\begin{itemize}
+  \item its average performance over the full test period;
+  \item the stability of its performance across shorter periods.
+\end{itemize}
+
+Random Forest performs better according to the first measure, while OLS-3 is
+more frequently above the benchmark. Therefore, the final ranking should not be
+interpreted as evidence that Random Forest will always be the best choice.
+
+The target distribution also makes the ranking sensitive to extreme errors.
+The raw next-month return contains a small number of very large observations,
+and squared loss gives these observations high weight. Reporting MAE provides
+a useful comparison, but the primary ranking still depends on MSE.
+
+\subsection{Data limitations that remain}
+
+The stock universe is based on a locked S\&P 500-style ticker list rather than
+a fully point-in-time index-constituent database. The locked list ensures that
+the same universe is used throughout the pipeline, but it does not fully solve
+survivorship and selection bias.
+
+Ticker-based matching can also be affected by:
+
+\begin{itemize}
+  \item ticker changes;
+  \item mergers and acquisitions;
+  \item delistings;
+  \item incomplete historical membership information;
+  \item differences between Yahoo and Compustat identifiers.
+\end{itemize}
+
+Yahoo Finance is convenient and provides a long price history, but it does not
+include a permanent security identifier, complete delisting returns, or all the
+market microstructure information available from CRSP. Adjusted prices may also
+be revised.
+
+The accounting variables are annual, while market variables are monthly or
+constructed from daily data. Accounting information therefore changes much
+less frequently. Some constructed characteristics are also practical proxies
+rather than exact replications of every definition used in the literature.
+
+The 360 characteristic--macro interactions provide flexibility, but they also
+create many correlated predictors. Their high Random Forest group importance
+partly reflects that this group contains far more variables than the other
+groups. It should therefore not be interpreted as proof that every interaction
+is economically important.
+
+\subsection{Evaluation limitations}
+
+The test period contains only six years. Although it includes several different
+market conditions, it is still a relatively short period for evaluating the
+stability of stock-return prediction.
+
+I also do not conduct a formal statistical comparison of forecast losses. The
+ranking shows that Random Forest has the lowest monthly MSE, but it does not
+show that the difference is statistically significant after accounting for
+time dependence and the comparison of several models.
+
+The current out-of-sample \(R^2\) evaluates forecast levels relative to the
+historical mean. An additional cross-sectional measure could remove each
+month's average return and average prediction. This would test more directly
+whether a model can identify which stocks perform relatively better or worse
+within each month.
+
+Finally, the project evaluates prediction error and not an investment strategy.
+It does not report:
+
+\begin{itemize}
+  \item long-short portfolio returns;
+  \item Sharpe ratios;
+  \item transaction costs;
+  \item turnover;
+  \item market impact;
+  \item short-selling constraints;
+  \item factor-adjusted performance.
+\end{itemize}
+
+A lower MSE therefore cannot automatically be interpreted as a profitable
+trading opportunity.
+
 
 \subsection{What I would do differently}
 
-With more time and better data access, I would make five main improvements:
+With more time and better data access, I would improve the project in the
+following order.
 
-\begin{itemize}
-  \item use a point-in-time CRSP/Compustat universe with permanent identifiers and delisting returns;
-  \item use exact public filing dates instead of a fixed six-month accounting lag;
-  \item keep a longer untouched test period or evaluate several historical forecast origins;
-  \item add formal tests for differences in monthly prediction loss;
-  \item design a portfolio exercise before opening a new test sample and include realistic trading costs.
-\end{itemize}
+I would use a point-in-time CRSP/Compustat database with permanent
+identifiers, complete delisting returns, and historical constituent
+information. I would also use exact accounting filing dates instead of a fixed
+six-month lag.
 
-I would also compare predictor groups more systematically. Instead of relying
-only on impurity importance from one fitted Random Forest, I would examine how
-importance changes across time windows and whether the same groups remain useful
-in different market regimes.
 
 % ============================================================
 % 6. Conclusion
 % ============================================================
+
 \section{Conclusion}
 \label{sec:conclusion}
 
-This project compares six models for predicting next-month stock excess
-returns. The main question is whether machine learning improves on a simple
-historical-mean forecast.
+This project examined whether machine-learning methods can improve the
+prediction of next-month stock excess returns relative to a historical-mean
+benchmark. I compared six approaches that represent different levels of model
+complexity: the Historical Mean, OLS-3, Partial Least Squares, Elastic Net,
+Random Forest, and Gradient Boosting.
 
-The answer is cautious. Random Forest performs best in the 2020--2025 test
-sample and reduces average monthly squared forecast error by about 1.14\%.
-OLS-3 provides only a very small improvement but remains competitive despite
-using only three predictors. Elastic Net shrinks all coefficients to zero and
-matches the benchmark. PLS and Gradient Boosting perform worse than the
-historical mean.
+The results provide a cautious answer to the research question. Random Forest
+ranks first according to the main monthly MSE criterion. Its monthly
+out-of-sample \(R^2\) is \(1.1427\%\), meaning that it reduces average monthly
+squared prediction error by approximately \(1.14\%\) relative to the historical
+mean. This is a positive result, but it is still a modest improvement and should
+not be interpreted as an investment return.
 
-The comparison shows that complexity is not automatically valuable. Random
-Forest benefits from averaging many trees and using interactions, but Gradient
-Boosting and PLS do not generalize well in this sample. The yearly results also
-show that Random Forest's full-period advantage is not stable across all six
-years.
+OLS-3 ranks second and produces only a very small improvement over the
+benchmark. Nevertheless, its result is important because it uses only size,
+book-to-market, and 12-month momentum. The fact that such a simple model remains
+competitive shows that increasing the number of predictors and the complexity
+of the model does not automatically lead to better forecasts.
 
-The main conclusion is therefore not that machine learning solves stock return
-prediction. It is that one ensemble method produces a modest improvement under
-a careful chronological design, while several other sophisticated methods do
-not. Simple benchmarks, validation on future periods, and honest reporting of
-failures are essential when comparing financial prediction models.
+The other models provide useful negative results. Elastic Net shrinks all 484
+coefficients to zero and therefore produces almost the same forecast as the
+historical mean. PLS performs worse than the benchmark even after the number of
+components is optimized. Gradient Boosting also underperforms and produces a
+negative prediction-target correlation. These findings show that
+regularization, dimension reduction, and nonlinear modeling are not sufficient
+on their own. Their success depends on whether the relationships estimated in
+the training period remain stable in later periods.
+
+The yearly analysis also changes the interpretation of the overall ranking.
+Random Forest has a positive annual out-of-sample \(R^2\) in only one of the
+six test years, while OLS-3 is positive in four years. The Random Forest result
+is therefore driven strongly by its performance in 2020. I conclude that
+Random Forest has the best average test-period performance, but not that it is
+the most reliable model in every market environment.
+
+An important lesson from the project is that the research design matters as
+much as the model itself. Expanding-window tuning, a separate validation
+period, a simple benchmark, and an untouched final test were necessary to avoid
+selecting a model only because it fitted earlier observations well. The
+validation results were especially useful because they showed that the more
+complex 300-tree Random Forest and Gradient Boosting specifications did not
+generalize as well as the fixed 100-tree versions.
+
+The project evaluates statistical forecast accuracy rather than portfolio
+performance. The results do not show whether the predictions can generate
+profitable long-short portfolios after turnover, transaction costs, liquidity
+constraints, and short-selling restrictions. Therefore, the financial
+conclusion is limited to forecast performance: Random Forest reduces prediction
+error modestly, but the project does not establish a profitable trading
+strategy.
+
+A natural extension would be to add neural networks. Neural networks could
+capture more complex nonlinear relationships among stock characteristics,
+market variables, and macroeconomic states. However, they would also introduce
+more hyperparameters and a greater risk of overfitting. I would therefore begin
+with a relatively shallow network and use strong regularization, early
+stopping, and the same expanding-window validation design used in the current
+project.
+
+Because the data contain 484 predictors, I would also examine a
+PCA--neural-network approach. Principal Component Analysis could first reduce
+the predictor set to a smaller number of components, and the neural network
+could then model nonlinear relationships among those components. This may
+reduce computational cost, noise, and multicollinearity. At the same time, PCA
+is unsupervised and may discard variables that explain little predictor
+variance but still contain useful return information. I would therefore compare
+three alternatives:
+
+\begin{itemize}
+  \item a neural network using the complete predictor set;
+  \item a neural network using PCA components;
+  \item a neural network using supervised components or selected predictor
+        groups.
+\end{itemize}
+
+The comparison would have to use the same chronological samples and a genuinely
+new test period. I would not select the neural-network architecture based on the
+2020--2025 results that have already been observed.
+
+Further extensions would include cross-sectional out-of-sample \(R^2\), formal
+tests of differences in prediction loss, and a pre-specified portfolio
+evaluation with transaction costs. Better data would also improve the study,
+especially a point-in-time CRSP/Compustat universe with permanent identifiers,
+delisting returns, and exact accounting filing dates.
+
+Overall, the project does not show that machine learning solves the stock-return
+prediction problem. It shows that one ensemble method can produce a modest
+improvement, while several other sophisticated methods fail to outperform a
+simple benchmark. The main conclusion is therefore that model complexity can
+be useful, but only when it is combined with careful timing, chronological
+validation, realistic benchmarks, and cautious interpretation.
 
 \FloatBarrier
 \printbibliography[heading=bibintoc,title={References}]
@@ -1160,34 +1517,6 @@ failures are essential when comparing financial prediction models.
 \clearpage
 \appendix
 
-\section{Code and Reproducibility Overview}
-\label{app:code}
 
-The full code is included in the project repository. The empirical workflow is
-organized into separate stages so that data construction, model comparison, and
-reporting can be checked independently.
-
-\begin{enumerate}
-  \item \texttt{src/data/}: daily data cleaning, monthly feature construction,
-        accounting and macro merges, interaction construction, imputation, and
-        winsorization;
-  \item \texttt{src/models/step\_01\_fixed/}: fixed model specifications;
-  \item \texttt{src/models/step\_02\_tuning/}: expanding-window tuning;
-  \item \texttt{src/models/step\_03\_optimization/}: validation comparison of
-        fixed and optimized versions;
-  \item \texttt{src/models/step\_04\_test/}: final fit on the development
-        sample and one-time test evaluation;
-  \item \texttt{src/models/step\_05\_interpretation/}: tables, feature
-        importance, yearly results, and figures.
-\end{enumerate}
-
-The final model-ready data contain 211,059 rows and 484 predictors. The final
-paper tables are embedded in the LaTeX source, while the three main figures are
-stored under \texttt{documentation/figures/}. This allows the PDF to compile
-without requiring the large model-output folder.
-
-The official test results should not be used to retune models or change the
-predictor set. Re-running the same fixed workflow is a reproducibility check,
-not a new model-selection exercise.
 
 \end{document}
