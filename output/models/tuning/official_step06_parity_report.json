@@ -1,0 +1,18 @@
+{
+  "cleanup_status": "The temporary Step 06 source and revised output folders were removed after successful parity verification.",
+  "direct_feature_importance_comparison": "not available: temporary Step 06 did not save fitted feature-importance outputs",
+  "elastic_net_serialized_fold_recomputation_difference": 7.66666667650906e-10,
+  "elastic_net_serialization_assessment": "Accepted as a harmless serialized-fold precision limitation; selected configuration, ranking, metrics, predictions, and conclusions are unchanged.",
+  "final_specification_match": true,
+  "maximum_final_metric_difference": 0.0,
+  "maximum_interpretation_metric_difference": 0.0,
+  "maximum_prediction_difference": 5.551115123125783e-17,
+  "maximum_realized_target_difference": 0.0,
+  "maximum_selected_tuning_mse_difference": 0.0,
+  "maximum_yearly_metric_difference": 9.71445146547012e-17,
+  "prediction_rows": 267672,
+  "ranking_match": true,
+  "selected_parameter_match": true,
+  "step_02_execution_statement": "The official Step 02 code was not rerun during migration.",
+  "tolerance": 1e-12
+}

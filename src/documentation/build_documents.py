@@ -15,9 +15,9 @@ PDF_DIR = DOCUMENTATION_DIR / "pdf"
 
 
 OUTPUT_NAMES = {
-    "paper": "thesis",
+    "Momen_Ismail": "Momen Ismail",
     "full_project_audit": "full_project_audit",
-    "data_construction_guide": "data_construction_guide",
+    "Data_Construction_Guide": "Data_Construction_Guide",
 }
 
 

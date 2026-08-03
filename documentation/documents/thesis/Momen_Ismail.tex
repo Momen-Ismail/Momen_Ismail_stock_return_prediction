@@ -143,6 +143,7 @@ isbn=false
 % ============================================================
 
 \begin{document}
+\pagenumbering{gobble}
 
 % ============================================================
 % Title page (excluded from the 15-page limit)
@@ -201,7 +202,7 @@ Instructor: Prof. Ivan Gufler
 
 \vfill
 
-27 July 2026
+2 August 2026
 
 \end{titlepage}
 
@@ -213,10 +214,10 @@ This project compares six models for predicting next-month stock excess
 returns: a historical mean benchmark, OLS-3, Partial Least Squares, Elastic
 Net, Random Forest, and Gradient Boosting. I use a monthly panel with 211,059
 stock-month observations, 656 tickers, and 484 predictors from February 1990
-to December 2025. The model choices are made using chronological training and
-validation periods, and the final specifications are evaluated once on the
+to December 2025. Hyperparameters are selected with 15 annual expanding-window
+folds spanning 2005--2019, and the selected specifications are evaluated on the
 2020--2025 test sample. Random Forest performs best and reduces monthly squared
-forecast error by about 1.14\% relative to the historical mean. OLS-3 provides
+forecast error by about 0.75\% relative to the historical mean. OLS-3 provides
 a very small improvement, Elastic Net reduces all coefficients to zero, and
 PLS and Gradient Boosting perform worse than the benchmark. The main conclusion
 is that machine learning can provide a modest improvement, but the result is
@@ -264,10 +265,11 @@ high dimensionality in different ways. Random Forest and Gradient Boosting
 allow nonlinear relationships and interactions.
 
 The comparison is designed to be realistic for financial prediction. I do not
-use random train-test splits. Hyperparameters are selected using expanding
-windows inside the training period, fixed and optimized versions are compared
-on a later validation period, and the final models are evaluated once on the
-2020--2025 test period. This follows the main lesson from the forecasting
+use random train-test splits. Hyperparameters are selected directly from 15
+annual expanding-window folds in the 1990--2019 development period. The fixed
+reference specifications are candidates in the same grids, not competitors in
+a second selection stage. The selected models are evaluated on the 2020--2025
+test period. This follows the main lesson from the forecasting
 literature: a model should be judged on genuinely future observations and
 against a clear benchmark \parencite{welch2008comprehensive}.
 
@@ -278,7 +280,7 @@ whether greater complexity is actually useful in this data set.
 
 The rest of the paper is organized as follows. \Cref{sec:data} describes the
 data and preprocessing. \Cref{sec:methodology} explains the models and the
-comparison design. \Cref{sec:results} presents the validation and test results.
+comparison design. \Cref{sec:results} presents the tuning and test results.
 \Cref{sec:critical-reflection} discusses the main limitations and what I would
 do differently. \Cref{sec:conclusion} concludes.
 
@@ -382,18 +384,16 @@ predictor values, infinite values, or duplicated ticker-month observations.
 \toprule
 Sample & Observations & Months & Tickers & Start & End \\
 \midrule
-Training    & 131,061 & 299 & 572 & 1990-02 & 2014-12 \\
-Validation  &  35,386 &  60 & 611 & 2015-01 & 2019-12 \\
 Development & 166,447 & 359 & 613 & 1990-02 & 2019-12 \\
 Test        &  44,612 &  72 & 641 & 2020-01 & 2025-12 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The training sample is used for tuning. The validation sample is used to choose
-between fixed and optimized versions. The development sample combines training
-and validation for the final fit. The test sample is used only for the final
-comparison.
+The development sample is used for expanding-window tuning and final refitting.
+The initial fold estimates models through December 2004 and validates on 2005;
+the window then expands annually until the final 2019 validation fold. The test
+sample is not loaded by the tuning or configuration-selection stages.
 
 % ============================================================
 % 3. Methodology
@@ -609,23 +609,23 @@ I do not use random cross-validation. A random split would mix earlier and
 later market observations and could allow future market conditions to influence
 model selection.
 
-Instead, hyperparameters are selected using ten annual expanding-window folds
-inside the February 1990--December 2014 training sample:
+Instead, hyperparameters are selected using 15 annual expanding-window folds
+inside the February 1990--December 2019 development sample:
 
 \begin{itemize}
   \item the first fold trains through December 2004 and validates on 2005;
   \item the training window then expands by one year for each new fold;
-  \item the final fold trains through December 2013 and validates on 2014.
+  \item the final fold trains through December 2018 and validates on 2019.
 \end{itemize}
 
 For each candidate specification, I calculate monthly MSE in every validation
-year and then average the ten annual results:
+year and then average the 15 annual results:
 
 \begin{equation}
  \operatorname{CV\text{-}MSE}(\lambda)
  =
- \frac{1}{10}
- \sum_{k=1}^{10}
+ \frac{1}{15}
+ \sum_{k=1}^{15}
  \operatorname{MSE}_{\mathrm{month},k}(\lambda),
  \label{eq:cv-mse}
 \end{equation}
@@ -646,108 +646,83 @@ I use monthly MSE as the tuning criterion because the number of stocks differs
 across months. Averaging errors within month first prevents months with more
 observations from receiving greater weight.
 
-\subsection{Fixed and optimized specifications}
+For PLS and Elastic Net, a new StandardScaler is fitted within every training
+fold and then applied to that fold's validation year. Random Forest and Gradient
+Boosting remain unscaled. Thus no preprocessing parameter is learned from a
+validation year or from the test sample.
 
-Before tuning, I estimate fixed reference versions of the models. These provide
-a direct test of whether optimization actually improves performance.
+\subsection{Candidate configurations and selection}
 
-The main fixed specifications are:
-
-\begin{itemize}
-  \item PLS with 20 components;
-  \item Elastic Net with \(\alpha=0.0001\) and \(l_1\)-ratio \(=0.50\);
-  \item Random Forest with 100 trees;
-  \item Gradient Boosting with 100 trees, learning rate \(0.01\), and maximum
-        depth 2.
-\end{itemize}
-
-The expanding-window training exercise produces optimized candidates. However,
-I do not automatically send these candidates to the final test. I first compare
-each optimized specification with its fixed version using the later
-January 2015--December 2019 validation sample.
-
-This additional validation step is important because a specification that
-performs well in earlier training folds may not remain useful in a later market
-period.
-
-\subsection{Validation-based final model selection}
-
-The validation results are shown in
-\Cref{tab:validation-choice}.
+The original fixed specifications remain useful descriptive baselines. They are
+included once in the candidate grids, however, and do not enter a separate
+fixed-versus-tuned decision. Within each family, I select the candidate with the
+exact minimum unrounded average monthly MSE. Deterministic grid order is used
+only when stored candidate values are exactly tied.
 
 \begin{table}[H]
 \centering
-\caption{Validation choice between fixed and optimized specifications}
-\label{tab:validation-choice}
-\small
-\setlength{\tabcolsep}{4.5pt}
+\caption{Candidate grids and expanding-window selections}
+\label{tab:tuning-selection}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
 
 \begin{tabularx}
 {\textwidth}
-{>{\raggedright\arraybackslash}p{2.5cm}
- S[table-format=1.6]
- S[table-format=1.6]
- >{\raggedright\arraybackslash}X}
+{>{\raggedright\arraybackslash}p{2.1cm}
+ >{\raggedright\arraybackslash}X
+ >{\raggedright\arraybackslash}p{2.5cm}
+ >{\raggedright\arraybackslash}p{2.9cm}
+ r}
 \toprule
 {Model family}
-& {Fixed monthly MSE}
-& {Optimized monthly MSE}
-& {Final validation choice} \\
+& {Complete candidate grid}
+& {Original fixed candidate}
+& {Selected configuration}
+& {Average MSE} \\
 \midrule
 
 PLS
-& 0.007710
-& 0.007627
-& Optimized version with 2 components \\
+& Components: \(1,2,3,5,20\)
+& 20 components
+& 2 components
+& 0.009524326361922 \\
 
 Elastic Net
-& 0.007750
-& 0.007449
-& Optimized version with \(\alpha=0.015\) and \(l_1\)-ratio \(=0.85\) \\
+& \(\alpha\in\{0.01,0.015,0.02\}\),
+  \(l_1\)-ratio \(\in\{0.75,0.85,0.90\}\), plus fixed
+& \(\alpha=0.0001\), ratio \(=0.50\)
+& \(\alpha=0.015\), ratio \(=0.85\)
+& 0.009280693 \\
 
 Random Forest
-& 0.007516
-& 0.007534
-& Fixed version with 100 trees \\
+& Trees: \(100,200,300\); square-root feature sampling; leaf size 20
+& 100 trees
+& 300 trees
+& 0.010110163460114 \\
 
 Gradient Boosting
-& 0.007450
-& 0.007588
-& Fixed version with 100 trees, learning rate \(0.01\), and depth 2 \\
+& Trees: \(100,200,300\); rates: \(0.01,0.3\); depths: \(1,2\)
+& 100 trees, rate 0.01, depth 2
+& 100 trees, rate 0.01, depth 1
+& 0.009548724324135 \\
 
 \bottomrule
 \end{tabularx}
+\vspace{0.3em}
+
+\begin{minipage}{0.95\textwidth}
+\footnotesize
+\textit{Notes:} Random Forest candidates also use bootstrap sampling,
+\texttt{n\_jobs=-1}, and seed 42. Gradient Boosting uses seed 42. The fixed
+column is descriptive only; selection uses the minimum average MSE over all 15
+folds.
+\end{minipage}
 \end{table}
 
-The results lead to four different decisions.
-
-First, the optimized PLS model is retained because two components produce a
-lower validation MSE than the fixed 20-component model. This suggests that a
-small number of supervised components generalizes better than a larger
-component representation.
-
-Second, the optimized Elastic Net is retained because it improves on the fixed
-Elastic Net in validation. The selected penalty is strong enough to shrink all
-484 coefficients to zero. I do not treat this as a coding failure. It means
-that, under the selected chronological validation design, the model preferred a
-constant prediction over unstable linear predictor effects.
-
-Third, expanding-window tuning favored a larger Random Forest candidate with
-300 trees, but the fixed 100-tree model produces a lower MSE in the separate
-2015--2019 validation period. I therefore retain the fixed 100-tree version.
-
-Fourth, the more complex 300-tree Gradient Boosting candidate also performs
-worse than the fixed 100-tree model in the later validation period. I therefore
-retain the fixed version.
-
-These decisions show why I use both tuning folds and a separate validation
-sample. Optimization inside the training period does not automatically imply
-better performance in a genuinely later period.
-
-The final Random Forest specification is:
+The final Random Forest specification is therefore:
 
 \begin{itemize}
-  \item 100 trees;
+  \item 300 trees;
   \item square-root feature sampling at each split;
   \item minimum leaf size of 20;
   \item bootstrap sampling;
@@ -760,34 +735,41 @@ The final Gradient Boosting specification is:
 \begin{itemize}
   \item 100 trees;
   \item learning rate \(0.01\);
-  \item maximum tree depth 2;
+  \item maximum tree depth 1;
   \item random seed 42.
 \end{itemize}
 
-All final choices are made using the training and validation periods. The
-2020--2025 test results are not used to choose these specifications.
+The selection code reads development observations only. It does not load the
+2020--2025 test sample.
 
 \subsection{Final estimation and test procedure}
 
-After the final specifications are selected, I combine the training and
-validation samples into the February 1990--December 2019 development sample.
+After the configurations are selected, I refit each model on the complete
+February 1990--December 2019 development sample.
 
 The final procedure is:
 
 \begin{enumerate}
-  \item select hyperparameters using the 1990--2014 training sample;
-  \item compare fixed and optimized models using the 2015--2019 validation
+  \item evaluate all candidates in the 15 expanding 2005--2019 folds;
+  \item select each family's exact minimum average monthly MSE;
+  \item refit each selected configuration on the complete 1990--2019 development
         sample;
-  \item lock the final specifications;
-  \item refit each selected model on the complete 1990--2019 development
-        sample;
-  \item evaluate each fitted model once on the January 2020--December 2025
+  \item evaluate each fitted model on the January 2020--December 2025
         test sample.
 \end{enumerate}
 
-The final test contains 44,612 stock-month observations over 72 months. After
-the test results are opened, I do not change the predictors, hyperparameters,
-sample dates, or model specifications.
+The test contains 44,612 stock-month observations over 72 months.
+
+\subsection{Status of the revised analysis}
+
+This report presents a revised analysis produced after the originally submitted
+implementation and its 2020--2025 outcomes had been reviewed. The revised
+model-selection code remains technically isolated from the test data: Steps 02
+and 03 load only the development period. Nevertheless, the test period is not a
+pristine never-observed holdout for the revision process. The current results
+should therefore be read as a transparent corrected analysis, not as evidence
+from a newly opened test sample. Any further model development would require a
+new future holdout period.
 
 \subsection{Evaluation metrics}
 
@@ -881,10 +863,9 @@ separately.
 
 \subsection{Overall final-test performance}
 
-After completing the tuning and validation stages, I locked the final model
-specifications and refitted them on the complete February 1990--December 2019
-development sample. I then evaluated them once on the January 2020--December
-2025 test sample.
+After expanding-window tuning and direct configuration selection, I refitted
+the models on the complete February 1990--December 2019 development sample and
+evaluated them on January 2020--December 2025.
 
 \Cref{tab:test-results} reports the final results. The models are ranked by
 monthly MSE, which is the main evaluation criterion. The two out-of-sample
@@ -899,6 +880,7 @@ differences easier to read.
 \small
 \setlength{\tabcolsep}{3.8pt}
 
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{clrrrrr}
 \toprule
 Rank
@@ -911,7 +893,7 @@ Rank
 \midrule
 
 1 & Random Forest
-  & 0.022112 & 0.148700 &  1.1427 &  1.1071 &  0.1138 \\
+  & 0.022200 & 0.148996 &  0.7482 &  0.7149 &  0.0947 \\
 
 2 & OLS-3
   & 0.022360 & 0.149534 &  0.0301 &  0.0296 &  0.0313 \\
@@ -922,14 +904,15 @@ Rank
 4 & Historical Mean
   & 0.022367 & 0.149556 &  0.0000 &  0.0000 &  -- \\
 
-5 & PLS
-  & 0.022509 & 0.150032 & -0.6363 & -0.6579 &  0.0270 \\
+5 & Gradient Boosting
+  & 0.022378 & 0.149593 & -0.0493 & -0.0553 &  0.0023 \\
 
-6 & Gradient Boosting
-  & 0.022573 & 0.150242 & -0.9192 & -0.9203 & -0.0481 \\
+6 & PLS
+  & 0.022509 & 0.150032 & -0.6363 & -0.6579 &  0.0270 \\
 
 \bottomrule
 \end{tabular}
+}
 
 \vspace{0.3em}
 
@@ -945,12 +928,12 @@ constant predictions.
 \end{table}
 
 Random Forest ranks first according to the prespecified monthly MSE criterion.
-Its monthly out-of-sample \(R^2\) is \(1.1427\%\). This means that the model
-reduces average monthly squared prediction error by approximately \(1.14\%\)
+Its monthly out-of-sample \(R^2\) is \(0.7482\%\). This means that the model
+reduces average monthly squared prediction error by approximately \(0.75\%\)
 relative to the historical mean. It does not mean that the model predicts a
-return of \(1.14\%\).
+return of \(0.75\%\).
 
-The pooled out-of-sample \(R^2\) is similar at \(1.1071\%\). The monthly measure
+The pooled out-of-sample \(R^2\) is similar at \(0.7149\%\). The monthly measure
 gives every month equal weight, while the pooled measure gives every
 stock-month observation equal weight. The similar values show that the result
 is not driven only by months containing more stocks.
@@ -967,11 +950,12 @@ prediction. I interpret this as a valid negative result rather than a coding
 error. Under the selected penalty and chronological validation design, Elastic
 Net did not find stable linear effects that improved on the benchmark.
 
-PLS and Gradient Boosting both have negative out-of-sample \(R^2\). Their
-predictions therefore produce greater squared error than the historical mean.
-Gradient Boosting also has a negative prediction-target correlation. These
-results show that additional model complexity does not automatically improve
-out-of-sample performance.
+Gradient Boosting improves substantially relative to the earlier depth-2
+specification, but its selected depth-1 model remains slightly below the
+historical-mean benchmark. Its prediction-target correlation is positive but
+close to zero. PLS performs worst by monthly MSE. These results show that
+additional model complexity does not automatically improve out-of-sample
+performance.
 
 \begin{figure}[H]
 \centering
@@ -983,8 +967,8 @@ out-of-sample performance.
 Monthly out-of-sample \(R^2\) relative to the historical-mean benchmark in the
 2020--2025 test sample. The graph displays the \(R^2\) values in decimal form,
 while \Cref{tab:test-results} reports them in percent. Random Forest's value of
-approximately \(0.011427\) corresponds to an error reduction of approximately
-\(1.1427\%\).
+approximately \(0.007482\) corresponds to an error reduction of approximately
+\(0.7482\%\).
 }
 \label{fig:test-oos-r2}
 \end{figure}
@@ -1026,8 +1010,9 @@ result in that year is sufficiently strong to offset several negative annual
 values and produce a positive result over the complete test period.
 
 OLS-3 has a much smaller full-period improvement, but its annual
-out-of-sample \(R^2\) is positive in four of the six test years. PLS and
-Gradient Boosting are positive in only one year each.
+out-of-sample \(R^2\) is positive in four of the six test years. PLS is
+meaningfully positive in one year and Gradient Boosting in two years when
+values within \(10^{-6}\) of zero are treated as economically negligible.
 
 This comparison changes how I interpret the overall ranking. Random Forest has
 the lowest average forecast error over the complete period, but its advantage
@@ -1060,10 +1045,10 @@ interpreted as causal effects or estimated risk premia.
 \label{fig:rf-group-importance}
 \end{figure}
 
-Characteristic--macro interactions account for approximately \(73.7\%\) of
+Characteristic--macro interactions account for approximately \(73.9\%\) of
 the total Random Forest impurity importance. The Welch--Goyal variables account
-for approximately \(11.7\%\), market and VIX variables for \(7.8\%\), and the
-remaining stock characteristics for approximately \(6.8\%\). SIC2 industry
+for approximately \(11.8\%\), market and VIX variables for \(7.6\%\), and the
+remaining stock characteristics for approximately \(6.7\%\). SIC2 industry
 indicators contribute almost no measured importance.
 
 This pattern suggests that Random Forest obtains much of its fitted prediction
@@ -1227,13 +1212,13 @@ important for making the project understandable and reproducible.
 Computational cost of tree tuning
 &
 Gradient Boosting tuning was very slow because the model fits trees
-sequentially across several annual folds. The final specification was chosen
-using the separate validation comparison rather than accepting the largest
-tuned model.
+sequentially across 15 annual folds. I saved every completed fold and candidate,
+verified the 450 fold results, and promoted the completed tuning outputs into
+the official five-step workflow without repeating the expensive fits.
 &
-The project reached a usable final specification, but the full tuning process
-would be more reproducible if every completed candidate and fold were saved as
-a checkpoint.
+The official code can reproduce the full tuning in the future, and provenance
+metadata records the migration. Per-fold runtime and warning diagnostics were
+not recorded by the completed temporary run.
 \\
 
 \bottomrule
@@ -1254,24 +1239,24 @@ fully removed.
 \subsection{What worked well}
 
 The strongest methodological decision was the chronological sample design. I
-used expanding training windows instead of random cross-validation, compared
-fixed and optimized models in a later validation period, and opened the final
-test only after the specifications had been chosen.
+used expanding training windows instead of random cross-validation and required
+every candidate to predict 15 future calendar years. Including the original
+fixed specifications directly in the grids made the rule simple and auditable:
+the exact minimum average monthly MSE determines the selected configuration.
 
-This structure was useful because it revealed that tuning results from an
-earlier period do not necessarily transfer to a later period. The 300-tree
-Random Forest and Gradient Boosting candidates performed better within the
-training-stage tuning exercise, but worse than their 100-tree versions in the
-2015--2019 validation sample. Without the separate validation period, I would
-have selected unnecessarily complex final models.
+The revision also clarified an important limitation. Although the selection
+code never loads test observations, the 2020--2025 outcomes had already been
+observed when the earlier implementation was reviewed. I therefore report the
+current analysis as a corrected revised result rather than describing the test
+period as newly opened or untouched during the revision process.
 
 The use of a historical-mean benchmark also worked well. It made the
 interpretation direct: a model only provides value under the chosen loss
 function if it reduces forecast error relative to a simple constant prediction.
 
 The project also produced useful negative results. Elastic Net selected no
-variables, PLS underperformed the benchmark, and Gradient Boosting produced the
-worst final test result. These findings are informative because they show that
+variables, PLS underperformed the benchmark, and Gradient Boosting remained
+slightly below it. These findings are informative because they show that
 large predictor sets, regularization, dimension reduction, and nonlinear models
 do not automatically generate better forecasts.
 
@@ -1279,7 +1264,7 @@ do not automatically generate better forecasts.
 
 Elastic Net shrinks all 484 coefficients to zero. At first, this result looked
 like a possible implementation error. After checking the fitted coefficients,
-predictions, validation results, and benchmark, I concluded that it is a valid
+predictions, tuning results, and benchmark, I concluded that it is a valid
 model outcome. Under the selected penalty, the model preferred a constant
 forecast rather than unstable linear effects.
 
@@ -1289,7 +1274,7 @@ stable linear information to improve on the historical mean under this sample
 and chronology.
 
 PLS presents a different failure. Reducing the 484 predictors to two supervised
-components improved validation performance relative to the fixed
+components improved expanding-window performance relative to the fixed
 20-component version. Nevertheless, it underperformed the benchmark in the
 final test. This shows that dimension reduction can control complexity without
 guaranteeing that the estimated components remain useful in a later market
@@ -1297,9 +1282,9 @@ period.
 
 Gradient Boosting also illustrates the danger of model flexibility. The model
 sequentially corrects earlier errors, but these corrections may fit unstable
-patterns. Its negative test out-of-sample \(R^2\) and negative correlation
-suggest that the estimated relationships did not transfer successfully to the
-test period.
+patterns. Its test out-of-sample \(R^2\) is slightly negative and its
+prediction-target correlation is close to zero, suggesting little stable
+incremental information in the test period.
 
 Random Forest is the only complex model with a clear positive full-period
 result. Averaging many randomized trees appears to be more effective than
@@ -1309,7 +1294,7 @@ years, so I do not interpret it as a universal relationship.
 \subsection{Limits of the Random Forest result}
 
 Random Forest reduces average monthly squared forecast error by approximately
-\(1.14\%\), but it has a positive annual out-of-sample \(R^2\) in only one of
+\(0.75\%\), but it has a positive annual out-of-sample \(R^2\) in only one of
 the six test years. Its strong performance in 2020 has a large effect on the
 full-period ranking.
 
@@ -1424,8 +1409,8 @@ Random Forest, and Gradient Boosting.
 
 The results provide a cautious answer to the research question. Random Forest
 ranks first according to the main monthly MSE criterion. Its monthly
-out-of-sample \(R^2\) is \(1.1427\%\), meaning that it reduces average monthly
-squared prediction error by approximately \(1.14\%\) relative to the historical
+out-of-sample \(R^2\) is \(0.7482\%\), meaning that it reduces average monthly
+squared prediction error by approximately \(0.75\%\) relative to the historical
 mean. This is a positive result, but it is still a modest improvement and should
 not be interpreted as an investment return.
 
@@ -1437,9 +1422,10 @@ of the model does not automatically lead to better forecasts.
 
 The other models provide useful negative results. Elastic Net shrinks all 484
 coefficients to zero and therefore produces almost the same forecast as the
-historical mean. PLS performs worse than the benchmark even after the number of
-components is optimized. Gradient Boosting also underperforms and produces a
-negative prediction-target correlation. These findings show that
+historical mean. PLS performs worse than the benchmark even after selecting two
+components. Gradient Boosting remains slightly below the benchmark, although
+its depth-1 configuration improves substantially on the earlier depth-2 result.
+These findings show that
 regularization, dimension reduction, and nonlinear modeling are not sufficient
 on their own. Their success depends on whether the relationships estimated in
 the training period remain stable in later periods.
@@ -1452,12 +1438,12 @@ Random Forest has the best average test-period performance, but not that it is
 the most reliable model in every market environment.
 
 An important lesson from the project is that the research design matters as
-much as the model itself. Expanding-window tuning, a separate validation
-period, a simple benchmark, and an untouched final test were necessary to avoid
-selecting a model only because it fitted earlier observations well. The
-validation results were especially useful because they showed that the more
-complex 300-tree Random Forest and Gradient Boosting specifications did not
-generalize as well as the fixed 100-tree versions.
+much as the model itself. Fifteen expanding validation years, fold-local
+preprocessing, an exact selection rule, and a simple benchmark reduce the scope
+for selecting a model only because it fits one period well. The revised design
+selects RF-300 and the shallow GB-100 configuration directly from the common
+candidate grids. Because the test outcomes had already been observed when the
+revision was undertaken, genuinely new extensions require a new future holdout.
 
 The project evaluates statistical forecast accuracy rather than portfolio
 performance. The results do not show whether the predictions can generate
@@ -1516,6 +1502,7 @@ validation, realistic benchmarks, and cautious interpretation.
 % ============================================================
 \clearpage
 \appendix
+
 
 
 

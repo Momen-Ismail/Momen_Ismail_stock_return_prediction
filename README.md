@@ -123,13 +123,19 @@ Fixed model estimation
         ↓
 Expanding-window hyperparameter tuning
         ↓
-Validation-based specification selection
+Exact-minimum configuration selection
         ↓
 Final model refitting and test evaluation
         ↓
 Interpretation tables and figures
         ↓
 PDF documentation
+```
+
+The model stages can also be run in this order with:
+
+```bash
+bash run_model_pipeline.sh
 ```
 
 ## 1. Clone the repository and install dependencies
@@ -215,8 +221,9 @@ An additional diagnostic script is available:
 python3 src/models/step_01_fixed/04_diagnose_fixed_models.py
 ```
 
-This stage estimates the initial fixed specifications using the training sample
-and evaluates them on the 2015–2019 validation period.
+This descriptive stage estimates the original fixed specifications on the
+original 1990–2014 partition and reports later-period baseline diagnostics. Its
+outputs do not enter configuration selection.
 
 ## 6. Run expanding-window hyperparameter tuning
 
@@ -226,13 +233,14 @@ python3 src/models/step_02_tuning/02_tune_tree_models.py
 python3 src/models/step_02_tuning/03_compare_tuning_results.py
 ```
 
-Tuning uses ten annual expanding-window folds:
+Tuning uses the full February 1990–December 2019 development sample and exactly
+15 annual expanding-window folds:
 
 ```text
 Train through 2004 → validate on 2005
 Train through 2005 → validate on 2006
 ...
-Train through 2013 → validate on 2014
+Train through 2018 → validate on 2019
 ```
 
 The main tuning criterion is average fold-level monthly mean squared error.
@@ -244,31 +252,27 @@ The parameters considered are:
 - Random Forest: number of trees;
 - Gradient Boosting: number of trees, learning rate, and tree depth.
 
-## 7. Run the optimized models and validation comparison
+## 7. Select the official configurations
 
 ```bash
-python3 src/models/step_03_optimization/01_optimized_linear_models.py
-python3 src/models/step_03_optimization/02_optimized_tree_models.py
-python3 src/models/step_03_optimization/03_compare_optimized_models.py
-python3 src/models/step_03_optimization/04_compare_fixed_vs_optimized.py
+python3 src/models/step_03_selection/01_select_configurations.py
 ```
 
-This stage estimates the tuned candidates on the complete training sample and
-compares them with the fixed versions on the separate 2015–2019 validation
-period.
+This stage selects the exact minimum unrounded average monthly MSE within each
+family. The 2015–2019 observations are already included as expanding validation
+folds, so there is no separate fixed-versus-tuned selection stage.
 
-The final validation-based choices are:
+The official selected configurations are:
 
 | Model family | Final specification |
 |---|---|
-| PLS | Optimized, 2 components |
-| Elastic Net | Optimized, `alpha = 0.015`, `l1_ratio = 0.85` |
-| Random Forest | Fixed, 100 trees |
-| Gradient Boosting | Fixed, 100 trees, learning rate 0.01, depth 2 |
+| PLS | 2 components |
+| Elastic Net | `alpha = 0.015`, `l1_ratio = 0.85` |
+| Random Forest | 300 trees |
+| Gradient Boosting | 100 trees, learning rate 0.01, depth 1 |
 
-The tuned 300-tree Random Forest and Gradient Boosting specifications were not
-used in the final test because they did not improve validation monthly MSE
-relative to the fixed 100-tree versions.
+The fixed-versus-selected output is retained only as a descriptive comparison;
+it does not alter these exact-minimum selections.
 
 ## 8. Run the official final-test evaluation
 
@@ -278,16 +282,33 @@ python3 src/models/step_04_test/01_final_test_evaluation.py
 
 This script:
 
-1. loads the locked final specifications;
-2. combines the training and validation periods into the development sample;
+1. loads the official Step 03 selected configurations;
+2. loads the complete development and test samples;
 3. refits all six models using February 1990–December 2019;
-4. predicts the untouched January 2020–December 2025 test period;
+4. predicts January 2020–December 2025;
 5. saves the official test metrics and predictions.
 
 The test sample is not used for tuning or specification selection.
 
-Re-running this script with the locked specifications is a replication exercise.
-The test results should not be used to change the model specifications.
+Test results must not be used to change the selected specifications.
+
+### Current migration versus a future full reproduction
+
+The commands above are the complete future reproduction procedure, including
+the expensive 450-fit Step 02 run. During the current repository migration,
+the completed verified temporary tuning results were validated and promoted
+into the official Step 02 schema. Step 02 was not rerun; execution began at
+Step 03. Provenance and numerical checks are stored in:
+
+```text
+output/models/tuning/tuning_migration_provenance.json
+output/models/tuning/official_step06_parity_report.json
+```
+
+The 2020–2025 outcomes had already been observed when the earlier project
+version was reviewed. The current code still isolates tuning and selection from
+test data, but the revised results should not be described as coming from a
+newly opened holdout period.
 
 ## 9. Generate the interpretation outputs
 
@@ -341,7 +362,7 @@ documentation/pdf/Momen Ismail.pdf
 **LaTeX source:**
 
 ```text
-documentation/documents/thesis/paper.tex
+documentation/documents/thesis/Momen_Ismail.tex
 ```
 
 The paper contains the research question, data summary, methodology, results,
@@ -519,10 +540,13 @@ output/quality/006_cleaning_summary.csv
 
 | Sample | Period | Observations | Role |
 |---|---|---:|---|
-| Training | February 1990–December 2014 | 131,061 | Fixed estimation and tuning |
-| Validation | January 2015–December 2019 | 35,386 | Fixed-versus-optimized comparison |
-| Development | February 1990–December 2019 | 166,447 | Final model refitting |
+| Development | February 1990–December 2019 | 166,447 | Tuning and final model refitting |
 | Test | January 2020–December 2025 | 44,612 | Official final evaluation |
+
+The first expanding fold trains through December 2004 and validates on 2005.
+The window expands annually through the 2019 validation fold. The older
+1990–2014 and 2015–2019 labels remain only in descriptive Step 01 baseline
+outputs; they are not an outer model-selection split.
 
 Random train-test splitting is not used.
 
@@ -548,11 +572,19 @@ The main final ranking is stored in:
 output/models/test/final_test_model_comparison.csv
 ```
 
+Official tuning and selection provenance is stored in:
+
+```text
+output/models/tuning/tuning_migration_provenance.json
+output/models/tuning/official_step06_parity_report.json
+output/models/selection/selection_metadata.json
+```
+
 ## Interpretation outputs
 
 ```text
 output/models/interpretation/final_prediction_results.csv
-output/models/interpretation/fixed_vs_optimized_results.csv
+output/models/interpretation/fixed_vs_selected_results.csv
 output/models/interpretation/best_hyperparameters.csv
 output/models/interpretation/final_predictor_group_summary.csv
 output/models/interpretation/final_report_results.xlsx
@@ -571,15 +603,15 @@ documentation/figures/
 
 | Rank | Model | Monthly out-of-sample \(R^2\) |
 |---:|---|---:|
-| 1 | Random Forest | 1.1427% |
+| 1 | Random Forest | 0.7482% |
 | 2 | OLS-3 | 0.0301% |
 | 3 | Elastic Net | approximately 0.0000% |
 | 4 | Historical Mean | 0.0000% |
-| 5 | Partial Least Squares | -0.6363% |
-| 6 | Gradient Boosting | -0.9192% |
+| 5 | Gradient Boosting | -0.0493% |
+| 6 | Partial Least Squares | -0.6363% |
 
 Random Forest produces the lowest average monthly MSE in the 2020–2025 test
-sample and reduces squared forecast error by approximately 1.14% relative to the
+sample and reduces monthly squared forecast error by approximately 0.75% relative to the
 historical-mean benchmark.
 
 The improvement is modest and is not stable across every test year. The project
@@ -623,7 +655,7 @@ stock-return-ml-project/
 │   └── models/
 │       ├── fixed/
 │       ├── tuning/
-│       ├── optimization/
+│       ├── selection/
 │       ├── test/
 │       └── interpretation/
 │
@@ -641,14 +673,14 @@ stock-return-ml-project/
 │   ├── models/
 │   │   ├── step_01_fixed/
 │   │   ├── step_02_tuning/
-│   │   ├── step_03_optimization/
+│   │   ├── step_03_selection/
 │   │   ├── step_04_test/
 │   │   └── step_05_interpretation/
 │   └── documentation/
 │
 ├── README.md
 ├── requirements.txt
-└── run_pipeline.sh
+└── run_model_pipeline.sh
 ```
 
 ---
@@ -675,10 +707,9 @@ The authoritative empirical order is:
 Data Files 01–05
 → Fixed models
 → Expanding-window tuning
-→ Validation comparison
-→ Locked final specifications
+→ Exact-minimum configuration selection
 → Development-sample refitting
-→ One-time test evaluation
+→ Test-period evaluation
 → Interpretation
 → Documentation
 ```

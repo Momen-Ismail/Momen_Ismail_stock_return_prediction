@@ -1,177 +1,63 @@
-"""Combine the saved tuning results and selected parameters."""
+"""Validate and combine the four official tuning checkpoints."""
 
 from pathlib import Path
 import sys
 
 import pandas as pd
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import MODEL_OUTPUT_DIR  # noqa: E402
-
-
-OUTPUT_DIR = MODEL_OUTPUT_DIR / "tuning"
-
-FAMILIES = [
-    "pls",
-    "elastic_net",
-    "random_forest",
-    "gradient_boosting",
-]
+from src.config import TUNING_OUTPUT_DIR  # noqa: E402
+from src.models.utils.model_selection import (  # noqa: E402
+    CANDIDATE_CONFIGURATIONS,
+    VALIDATION_YEARS,
+)
 
 
 def main():
-    results = []
-    selected = []
-
-    for family in FAMILIES:
-        results_file = (
-            OUTPUT_DIR
-            / f"{family}_tuning_results.csv"
+    """Combine results only after candidate and fold checks pass."""
+    all_folds = []
+    all_results = []
+    for family, candidates in CANDIDATE_CONFIGURATIONS.items():
+        fold_file = TUNING_OUTPUT_DIR / f"{family}_tuning_fold_results.csv"
+        result_file = TUNING_OUTPUT_DIR / f"{family}_tuning_results.csv"
+        if not fold_file.exists() or not result_file.exists():
+            raise FileNotFoundError(f"Missing official tuning output for {family}.")
+        folds = pd.read_csv(fold_file)
+        results = pd.read_csv(result_file)
+        if len(results) != len(candidates):
+            raise ValueError(f"Unexpected candidate count for {family}.")
+        counts = folds.groupby("candidate_id")["validation_year"].agg(
+            ["count", "nunique", "min", "max"]
         )
-
-        parameters_file = (
-            OUTPUT_DIR
-            / f"{family}_best_parameters.csv"
-        )
-
-        if not results_file.exists():
-            raise FileNotFoundError(
-                f"Missing tuning results: {results_file}"
-            )
-
-        if not parameters_file.exists():
-            raise FileNotFoundError(
-                f"Missing selected parameters: {parameters_file}"
-            )
-
-        family_results = pd.read_csv(
-            results_file
-        )
-
-        family_selected = pd.read_csv(
-            parameters_file
-        )
-
+        expected_ids = {
+            f"{family}_{number:03d}"
+            for number in range(1, len(candidates) + 1)
+        }
         if (
-            "sample" in family_results.columns
-            and family_results["sample"].eq("test").any()
+            set(results["candidate_id"]) != expected_ids
+            or set(counts.index) != expected_ids
         ):
-            raise ValueError(
-                f"{family} tuning results contain test rows."
-            )
+            raise ValueError(f"Unexpected candidate IDs for {family}.")
+        if (counts["count"].ne(15).any()
+                or counts["nunique"].ne(15).any()
+                or counts["min"].ne(VALIDATION_YEARS[0]).any()
+                or counts["max"].ne(VALIDATION_YEARS[-1]).any()):
+            raise ValueError(f"Invalid fold coverage for {family}.")
+        if (pd.to_datetime(folds["train_end"]).dt.year
+                >= folds["validation_year"]).any():
+            raise ValueError(f"Training/validation leakage for {family}.")
+        all_folds.append(folds)
+        all_results.append(results)
 
-        if (
-            set(family_results["model_family"].unique())
-            != {family}
-        ):
-            raise ValueError(
-                f"Unexpected model family in {results_file}."
-            )
-
-        if (
-            set(family_selected["model_family"].unique())
-            != {family}
-        ):
-            raise ValueError(
-                f"Unexpected model family in {parameters_file}."
-            )
-
-        results.append(
-            family_results
-        )
-
-        selected.append(
-            family_selected
-        )
-
-    all_results = pd.concat(
-        results,
-        ignore_index=True,
+    pd.concat(all_folds, ignore_index=True).to_csv(
+        TUNING_OUTPUT_DIR / "tuning_fold_results.csv", index=False
     )
-
-    all_results = all_results.sort_values(
-        [
-            "model_family",
-            "cv_monthly_mse",
-        ]
-    ).reset_index(drop=True)
-
-    selected_parameters = pd.concat(
-        selected,
-        ignore_index=True,
+    pd.concat(all_results, ignore_index=True).to_csv(
+        TUNING_OUTPUT_DIR / "tuning_all_results.csv", index=False
     )
-
-    summary = selected_parameters.merge(
-        all_results,
-        on=[
-            "model_family",
-            "parameters",
-        ],
-        how="left",
-        validate="one_to_one",
-    )
-
-    if summary["cv_monthly_mse"].isna().any():
-        missing = summary.loc[
-            summary["cv_monthly_mse"].isna(),
-            "model_family",
-        ].tolist()
-
-        raise ValueError(
-            "Selected parameters were not found in the "
-            f"tuning results for: {missing}"
-        )
-
-    all_results.to_csv(
-        OUTPUT_DIR / "tuning_all_results.csv",
-        index=False,
-    )
-
-    summary.to_csv(
-        OUTPUT_DIR / "tuning_summary.csv",
-        index=False,
-    )
-
-    display_columns = [
-        "model_family",
-        "parameters",
-        "cv_monthly_mse",
-    ]
-
-    for optional_column in [
-        "cv_monthly_mse_std",
-        "cv_monthly_mse_se",
-        "cv_folds",
-    ]:
-        if optional_column in summary.columns:
-            display_columns.append(
-                optional_column
-            )
-
-    print("\nSelected tuning parameters:")
-    print(
-        summary[
-            display_columns
-        ].sort_values(
-            "cv_monthly_mse"
-        ).to_string(
-            index=False,
-            float_format=lambda value: f"{value:.12f}",
-        )
-    )
-
-    print(
-        "\nSaved combined tuning results:"
-    )
-    print(
-        OUTPUT_DIR / "tuning_all_results.csv"
-    )
-    print(
-        OUTPUT_DIR / "tuning_summary.csv"
-    )
+    print("Official tuning outputs passed all completeness and leakage checks.")
 
 
 if __name__ == "__main__":

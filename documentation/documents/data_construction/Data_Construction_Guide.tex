@@ -1600,27 +1600,15 @@ The final sample design is:
 Sample & Period and role \\
 \midrule
 
-Training
-&
-February 1990--December 2014. Used for fixed-model estimation and
-hyperparameter tuning.
-\\
-
-Validation
-&
-January 2015--December 2019. Used to compare fixed and optimized
-specifications.
-\\
-
 Development
 &
-February 1990--December 2019. Used to refit the locked final model
-specifications.
+February 1990--December 2019. Used for expanding-window tuning and to refit the
+selected final model specifications.
 \\
 
 Test
 &
-January 2020--December 2025. Used once for official final evaluation.
+January 2020--December 2025. Used for official evaluation after selection.
 \\
 
 \bottomrule
@@ -1635,21 +1623,21 @@ The corresponding final sample sizes are:
 \toprule
 Sample & Observations & Months & Tickers & Period \\
 \midrule
-Training & 131,061 & 299 & 572 & Feb. 1990--Dec. 2014 \\
-Validation & 35,386 & 60 & 611 & Jan. 2015--Dec. 2019 \\
 Development & 166,447 & 359 & 613 & Feb. 1990--Dec. 2019 \\
 Test & 44,612 & 72 & 641 & Jan. 2020--Dec. 2025 \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-Ticker counts differ across periods because firms enter and leave the available
-panel over time.
+The first tuning fold uses observations through December 2004 and validates on
+2005. The window expands annually through the 2019 validation fold. The older
+training and validation labels remain only in descriptive fixed-baseline
+outputs; they are not a second model-selection split.
 
 \subsection{Expanding-window tuning}
 
-Hyperparameter tuning uses ten annual expanding-window folds inside the
-training period:
+Hyperparameter tuning uses 15 annual expanding-window folds inside the
+development period:
 
 \begin{center}
 \small
@@ -1667,6 +1655,11 @@ Through December 2010 & 2011 \\
 Through December 2011 & 2012 \\
 Through December 2012 & 2013 \\
 Through December 2013 & 2014 \\
+Through December 2014 & 2015 \\
+Through December 2015 & 2016 \\
+Through December 2016 & 2017 \\
+Through December 2017 & 2018 \\
+Through December 2018 & 2019 \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1692,20 +1685,17 @@ A Decision Tree is not part of the official final comparison.
 
 \subsection{Specification-selection procedure}
 
-The final specifications were selected using the following procedure:
+The final specifications are selected using the following procedure:
 
 \begin{enumerate}
-  \item estimate fixed specifications on the training sample;
-  \item tune model families using the 2005--2014 expanding folds;
-  \item estimate the tuned candidates on the complete training sample;
-  \item compare fixed and optimized versions on the separate 2015--2019
-        validation period;
-  \item lock the final specification for each model family;
-  \item refit the locked models on the 1990--2019 development sample;
-  \item evaluate once on the untouched 2020--2025 test period.
+  \item retain the original fixed specifications as descriptive baselines;
+  \item tune every candidate using the 2005--2019 expanding folds;
+  \item select the exact minimum unrounded average monthly MSE in each family;
+  \item refit the selected models on the 1990--2019 development sample;
+  \item evaluate on the 2020--2025 test period.
 \end{enumerate}
 
-The final validation-based choices are:
+The selected configurations are:
 
 \begin{center}
 \small
@@ -1716,33 +1706,32 @@ Model family & Final choice \\
 
 Partial Least Squares
 &
-Optimized specification with 2 components.
+Specification with 2 components.
 \\
 
 Elastic Net
 &
-Optimized specification with
+Specification with
 \code{alpha = 0.015} and
 \code{l1\_ratio = 0.85}.
 \\
 
 Random Forest
 &
-Fixed specification with 100 trees.
+Specification with 300 trees.
 \\
 
 Gradient Boosting
 &
-Fixed specification with 100 trees, learning rate 0.01, and maximum depth 2.
+Specification with 100 trees, learning rate 0.01, and maximum depth 1.
 \\
 
 \bottomrule
 \end{tabularx}
 \end{center}
 
-The optimized 300-tree Random Forest and Gradient Boosting candidates were not
-used in the final test because they did not improve validation monthly MSE
-relative to the fixed 100-tree specifications.
+The fixed-versus-selected table is descriptive only and is not a second
+selection stage.
 
 \subsection{Model-specific scaling}
 
@@ -1761,13 +1750,15 @@ The final test period must not be used for:
 \begin{itemize}
   \item hyperparameter tuning;
   \item predictor selection;
-  \item choosing between fixed and optimized specifications;
+  \item choosing among candidate configurations;
   \item replacing one model with another;
   \item changing a specification after observing test performance.
 \end{itemize}
 
-The final 2020--2025 test is used once after all model decisions have been
-locked.
+The active Step 02 and Step 03 code does not load the 2020--2025 test sample.
+The present report is a revised analysis produced after the earlier test
+outcomes had been reviewed, so those observations are not described as a newly
+opened holdout for the revision.
 
 % ============================================================
 % 17. Relation to README and paper
@@ -1826,7 +1817,7 @@ The main course-project report is stored at:
 Its editable source is:
 
 \begin{center}
-\path{documentation/documents/thesis/paper.tex}
+\path{documentation/documents/thesis/Momen_Ismail.tex}
 \end{center}
 
 The report presents:

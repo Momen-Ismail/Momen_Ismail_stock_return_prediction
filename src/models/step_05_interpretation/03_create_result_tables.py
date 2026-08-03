@@ -15,19 +15,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     INTERPRETATION_OUTPUT_DIR,
-    MODEL_OUTPUT_DIR,
+    SELECTION_OUTPUT_DIR,
 )
 
-
-OPTIMIZATION_DIR = MODEL_OUTPUT_DIR / "optimization"
-TUNING_DIR = MODEL_OUTPUT_DIR / "tuning"
-
-TUNED_FAMILIES = [
-    "pls",
-    "elastic_net",
-    "random_forest",
-    "gradient_boosting",
-]
 
 DISPLAY_NAMES = {
     "historical_mean": "Historical Mean",
@@ -138,61 +128,36 @@ def behavior_flags():
     return add_display_names(data)
 
 
-def fixed_vs_optimized():
-    """Load the validation comparison created in Step 3."""
-    path = (
-        OPTIMIZATION_DIR
-        / "fixed_vs_optimized_family_summary.csv"
-    )
+def fixed_vs_selected():
+    """Load the descriptive fixed-versus-selected comparison."""
+    path = SELECTION_OUTPUT_DIR / "fixed_vs_selected_summary.csv"
 
     return read_csv(
         path,
         [
             "model_family",
-            "fixed_model",
-            "optimized_model",
-            "fixed_monthly_mse",
-            "optimized_monthly_mse",
-            "monthly_mse_improvement",
-            "monthly_mse_improvement_percent",
-            "fixed_monthly_oos_r2",
-            "optimized_monthly_oos_r2",
-            "optimization_improved",
+            "fixed_parameters",
+            "fixed_average_monthly_mse",
+            "selected_parameters",
+            "selected_average_monthly_mse",
+            "selected_is_original_fixed",
+            "mse_improvement_over_fixed",
+            "comparison_role",
         ],
     ).sort_values(
-        "optimized_monthly_mse"
+        "selected_average_monthly_mse"
     ).reset_index(drop=True)
 
 
 def best_hyperparameters():
-    """Collect the selected tuning parameters."""
-    tables = []
-
-    for family in TUNED_FAMILIES:
-        path = (
-            TUNING_DIR
-            / f"{family}_best_parameters.csv"
-        )
-
-        data = read_csv(
-            path,
-            [
-                "model_family",
-                "parameters",
-            ],
-        )
-
-        if len(data) != 1:
-            raise ValueError(
-                f"{path.name} should contain exactly one row."
-            )
-
-        tables.append(data)
-
-    return pd.concat(
-        tables,
-        ignore_index=True,
+    """Load the four official selected configurations."""
+    data = read_csv(
+        SELECTION_OUTPUT_DIR / "selected_parameters.csv",
+        ["model_family", "parameters", "average_monthly_mse"],
     )
+    if len(data) != 4 or data["model_family"].nunique() != 4:
+        raise ValueError("Expected one selected row for each of four families.")
+    return data
 
 
 def yearly_results():
@@ -414,7 +379,7 @@ def main():
 
     final = final_results()
     flags = behavior_flags()
-    comparison = fixed_vs_optimized()
+    comparison = fixed_vs_selected()
     parameters = best_hyperparameters()
     yearly = yearly_results()
 
@@ -457,7 +422,7 @@ def main():
 
     comparison.to_csv(
         INTERPRETATION_OUTPUT_DIR
-        / "fixed_vs_optimized_results.csv",
+        / "fixed_vs_selected_results.csv",
         index=False,
     )
 
@@ -482,7 +447,7 @@ def main():
         {
             "Final Results": final,
             "Behavior Flags": flags,
-            "Fixed vs Optimized": comparison,
+            "Fixed vs Selected": comparison,
             "Hyperparameters": parameters,
             "Yearly Results": yearly,
             "Model Complexity": complexity,

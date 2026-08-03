@@ -43,6 +43,10 @@ output/data/final/*
 !output/data/final/.gitkeep
 
 !output/models/.gitkeep
+!output/models/tuning/
+output/models/tuning/*
+!output/models/tuning/tuning_migration_provenance.json
+!output/models/tuning/official_step06_parity_report.json
 !output/reports/.gitkeep
 !output/quality/.gitkeep
 
@@ -119,13 +123,16 @@ input/raw/*
 !documentation/tables/
 !documentation/tables/*.tex
 
+
 # Ignore generated PDFs by default, but retain the final
 # paper and the data-construction guide.
 documentation/pdf/*
 !documentation/pdf/.gitkeep
-!documentation/pdf/thesis.pdf
+!documentation/pdf/Momen Ismail.pdf
 !documentation/pdf/Data_Construction_Guide.pdf
 
+# PDFs generated beside LaTeX sources
+documentation/documents/**/*.pdf
 
 # --------------------------------------------------
 # Internal final-submission audit
@@ -135,3 +142,4 @@ documentation/pdf/*
 documentation/documents/final_submission_audit/
 documentation/tables/final_submission_*.csv
 documentation/pdf/final_submission_audit.pdf
+documentation/documents/**/*.pdf

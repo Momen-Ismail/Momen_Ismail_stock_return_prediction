@@ -1,0 +1,1 @@
+"""Official configuration-selection stage."""

@@ -1,0 +1,98 @@
+{
+  "aggregate_recalculation_status": "accepted serialization limitation: the Elastic Net fold MSE values were serialized at lower precision, producing a recomputation difference of 7.66666667650906e-10; this does not affect selection or downstream results",
+  "aggregate_recalculation_tolerance": 1e-12,
+  "candidate_rows": 30,
+  "chronology_check": "passed",
+  "copied_on": "2026-08-02T21:00:16+02:00",
+  "cleanup_on": "2026-08-03",
+  "cleanup_status": "The temporary Step 06 source and revised output folders were removed after successful official-output and downstream parity verification.",
+  "destination_files": [
+    "output/models/tuning/pls_tuning_fold_results.csv",
+    "output/models/tuning/pls_tuning_results.csv",
+    "output/models/tuning/elastic_net_tuning_fold_results.csv",
+    "output/models/tuning/elastic_net_tuning_results.csv",
+    "output/models/tuning/random_forest_tuning_fold_results.csv",
+    "output/models/tuning/random_forest_tuning_results.csv",
+    "output/models/tuning/gradient_boosting_tuning_fold_results.csv",
+    "output/models/tuning/gradient_boosting_tuning_results.csv",
+    "output/models/tuning/tuning_fold_results.csv",
+    "output/models/tuning/tuning_all_results.csv"
+  ],
+  "diagnostic_note": "Step 06 did not record per-fold elapsed time or warnings; promoted diagnostic fields are marked not_recorded_in_verified_run.",
+  "duplicate_family_candidate_year_rows": 0,
+  "execution_statement": "The official Step 02 tuning scripts were not rerun during this migration.",
+  "family_details": {
+    "elastic_net": {
+      "candidate_rows": 10,
+      "fixed_configuration_count": 1,
+      "fold_rows": 150,
+      "maximum_serialized_fold_mean_to_saved_candidate_difference": 7.66666667650906e-10,
+      "maximum_source_to_official_candidate_difference": 0.0,
+      "maximum_source_to_official_fold_difference": 0.0
+    },
+    "gradient_boosting": {
+      "candidate_rows": 12,
+      "fixed_configuration_count": 1,
+      "fold_rows": 180,
+      "maximum_serialized_fold_mean_to_saved_candidate_difference": 5.204170427930421e-17,
+      "maximum_source_to_official_candidate_difference": 0.0,
+      "maximum_source_to_official_fold_difference": 0.0
+    },
+    "pls": {
+      "candidate_rows": 5,
+      "fixed_configuration_count": 1,
+      "fold_rows": 75,
+      "maximum_serialized_fold_mean_to_saved_candidate_difference": 4.163336342344337e-17,
+      "maximum_source_to_official_candidate_difference": 0.0,
+      "maximum_source_to_official_fold_difference": 0.0
+    },
+    "random_forest": {
+      "candidate_rows": 3,
+      "fixed_configuration_count": 1,
+      "fold_rows": 45,
+      "maximum_serialized_fold_mean_to_saved_candidate_difference": 3.9898639947466563e-17,
+      "maximum_source_to_official_candidate_difference": 0.0,
+      "maximum_source_to_official_fold_difference": 0.0
+    }
+  },
+  "fixed_candidate_check": "passed: exactly one per family",
+  "fold_rows": 450,
+  "folds_per_candidate": 15,
+  "grid_check": "passed",
+  "infinite_monthly_mse": 0,
+  "maximum_serialized_fold_mean_to_saved_candidate_difference": 7.66666667650906e-10,
+  "maximum_source_to_official_candidate_difference": 0.0,
+  "maximum_source_to_official_fold_difference": 0.0,
+  "migration_type": "verified_step_06_to_official_step_02",
+  "missing_monthly_mse": 0,
+  "historical_source_files_removed_after_parity": [
+    "output/models/revised_tuning/pls_revised_fold_results.csv",
+    "output/models/revised_tuning/pls_revised_all_results.csv",
+    "output/models/revised_tuning/elastic_net_revised_fold_results.csv",
+    "output/models/revised_tuning/elastic_net_revised_all_results.csv",
+    "output/models/revised_tuning/random_forest_revised_fold_results.csv",
+    "output/models/revised_tuning/random_forest_revised_all_results.csv",
+    "output/models/revised_tuning/gradient_boosting_revised_fold_results.csv",
+    "output/models/revised_tuning/gradient_boosting_revised_all_results.csv"
+  ],
+  "source_statement": "The original tuning results came from the completed temporary revised run and were migrated into the official Step 02 schema without numerical changes. The official Step 02 code was not rerun during migration.",
+  "source_to_official_numerical_tolerance": 1e-12,
+  "unique_candidate_ids": 30,
+  "validation_years": [
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019
+  ]
+}

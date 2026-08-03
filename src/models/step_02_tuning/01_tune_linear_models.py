@@ -1,114 +1,42 @@
-"""Tune PLS and Elastic Net using annual expanding-window validation."""
+"""Tune PLS and Elastic Net on the 1990--2019 development sample."""
 
 from pathlib import Path
 import sys
 
-import numpy as np
-from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import ElasticNet
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import MODEL_OUTPUT_DIR, TARGET  # noqa: E402
-from src.models.utils.data import (  # noqa: E402
-    expanding_year_folds,
-    load_model_data,
+from src.config import TUNING_OUTPUT_DIR  # noqa: E402
+from src.models.utils.data import load_model_data  # noqa: E402
+from src.models.utils.model_selection import (  # noqa: E402
+    official_folds,
+    tune_family,
+    validate_grids,
 )
-from src.models.utils.estimation import (  # noqa: E402
-    save_results,
-    tune_grid,
-)
-
-
-OUTPUT_DIR = MODEL_OUTPUT_DIR / "tuning"
-
-
-GRIDS = {
-    "pls": {
-        "n_components": [1, 2, 3, 5],
-    },
-    "elastic_net": {
-        "alpha": [
-            0.01,
-            0.015,
-            0.02,
-        ],
-        "l1_ratio": [
-            0.75,
-            0.85,
-            0.9,
-        ],
-    },
-}
-
-
-def make_model(family, params):
-    """Construct one linear-model candidate."""
-    if family == "pls":
-        return make_pipeline(
-            StandardScaler(),
-            PLSRegression(
-                n_components=int(params["n_components"]),
-                scale=False,
-            ),
-        )
-
-    if family == "elastic_net":
-        return make_pipeline(
-            StandardScaler(),
-            ElasticNet(
-                alpha=float(params["alpha"]),
-                l1_ratio=float(params["l1_ratio"]),
-                max_iter=20_000,
-                tol=1e-4,
-            ),
-        )
 
 
 def main():
-    samples, predictors = load_model_data(("train",))
-    train = samples["train"]
+    """Run all official linear-family candidates and save checkpoints."""
+    validate_grids()
+    samples, predictors = load_model_data(("development",))
+    if len(predictors) != 484:
+        raise ValueError(f"Expected 484 predictors; found {len(predictors)}.")
+    development = samples["development"]
+    folds = official_folds(development)
+    TUNING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    folds = expanding_year_folds(
-        train,
-        first_validation_year=2005,
-    )
-
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    for family, grid in GRIDS.items():
-        results, best_params = tune_grid(
-            family=family,
-            grid=grid,
-            make_model=make_model,
-            data=train,
-            predictors=predictors,
-            target=TARGET,
-            folds=folds,
+    for family in ["pls", "elastic_net"]:
+        fold_results, results = tune_family(
+            family, development, predictors, folds
         )
-
-        save_results(
-            family=family,
-            results=results,
-            best_params=best_params,
-            results_file=(
-                OUTPUT_DIR
-                / f"{family}_tuning_results.csv"
-            ),
-            parameters_file=(
-                OUTPUT_DIR
-                / f"{family}_best_parameters.csv"
-            ),
+        fold_results.to_csv(
+            TUNING_OUTPUT_DIR / f"{family}_tuning_fold_results.csv",
+            index=False,
         )
-
-        print(f"\nBest {family} parameters:")
-        print(best_params)
+        results.to_csv(
+            TUNING_OUTPUT_DIR / f"{family}_tuning_results.csv",
+            index=False,
+        )
 
 
 if __name__ == "__main__":

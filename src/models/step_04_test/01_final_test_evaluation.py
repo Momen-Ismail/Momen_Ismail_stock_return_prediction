@@ -16,7 +16,7 @@ from sklearn.preprocessing import StandardScaler
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import MODEL_OUTPUT_DIR, TARGET
+from src.config import SELECTION_OUTPUT_DIR, TARGET, TEST_OUTPUT_DIR
 from src.models.utils.data import arrays, load_model_data, ols3_predictors
 from src.models.utils.estimation import load_best_parameters
 from src.models.utils.evaluation import (
@@ -24,39 +24,33 @@ from src.models.utils.evaluation import (
     monthly_mse,
     rank_models,
 )
+from src.models.utils.model_selection import (  # noqa: E402
+    RANDOM_STATE,
+    complete_parameters,
+)
 
 
-TUNING_DIR = MODEL_OUTPUT_DIR / "tuning"
-OUTPUT_DIR = MODEL_OUTPUT_DIR / "test"
+OUTPUT_DIR = TEST_OUTPUT_DIR
 INTERPRETATION_DIR = OUTPUT_DIR / "interpretation_inputs"
-
-RANDOM_STATE = 42
 COEF_TOL = 1e-10
+EXPECTED_FAMILIES = {
+    "pls",
+    "elastic_net",
+    "random_forest",
+    "gradient_boosting",
+}
 
 
 def build_models(predictors):
-    """Create the final specifications selected using validation results."""
-    pls_params = load_best_parameters(
-        TUNING_DIR / "pls_best_parameters.csv"
+    """Create models selected by the official 15-fold procedure."""
+    selected = load_best_parameters(
+        SELECTION_OUTPUT_DIR / "selected_parameters.csv",
+        required_families=EXPECTED_FAMILIES,
     )
-
-    en_params = load_best_parameters(
-        TUNING_DIR / "elastic_net_best_parameters.csv"
-    )
-
-    # Validation selected optimized linear models but fixed tree models.
-    rf_params = {
-        "n_estimators": 100,
-        "max_features": "sqrt",
-        "min_samples_leaf": 20,
-        "bootstrap": True,
-    }
-
-    gb_params = {
-        "n_estimators": 100,
-        "learning_rate": 0.01,
-        "max_depth": 2,
-    }
+    pls_params = selected["pls"]
+    en_params = selected["elastic_net"]
+    rf_params = selected["random_forest"]
+    gb_params = selected["gradient_boosting"]
 
     models = {
         "ols_3": (
@@ -90,7 +84,10 @@ def build_models(predictors):
         ),
         "random_forest": (
             RandomForestRegressor(
-                **rf_params,
+                n_estimators=int(rf_params["n_estimators"]),
+                max_features="sqrt",
+                min_samples_leaf=20,
+                bootstrap=True,
                 oob_score=True,
                 n_jobs=-1,
                 random_state=RANDOM_STATE,
@@ -99,7 +96,9 @@ def build_models(predictors):
         ),
         "gradient_boosting": (
             GradientBoostingRegressor(
-                **gb_params,
+                n_estimators=int(gb_params["n_estimators"]),
+                learning_rate=float(gb_params["learning_rate"]),
+                max_depth=int(gb_params["max_depth"]),
                 random_state=RANDOM_STATE,
             ),
             predictors,
@@ -121,30 +120,30 @@ def build_models(predictors):
         },
         {
             "model": "pls",
-            "parameters": str({
-                **pls_params,
-                "selected_version": "optimized",
+            "parameters": repr({
+                **complete_parameters("pls", pls_params),
+                "selection": "official_15_fold_expanding_window",
             }),
         },
         {
             "model": "elastic_net",
-            "parameters": str({
-                **en_params,
-                "selected_version": "optimized",
+            "parameters": repr({
+                **complete_parameters("elastic_net", en_params),
+                "selection": "official_15_fold_expanding_window",
             }),
         },
         {
             "model": "random_forest",
-            "parameters": str({
-                **rf_params,
-                "selected_version": "fixed",
+            "parameters": repr({
+                **complete_parameters("random_forest", rf_params),
+                "selection": "official_15_fold_expanding_window",
             }),
         },
         {
             "model": "gradient_boosting",
-            "parameters": str({
-                **gb_params,
-                "selected_version": "fixed",
+            "parameters": repr({
+                **complete_parameters("gradient_boosting", gb_params),
+                "selection": "official_15_fold_expanding_window",
             }),
         },
     ])
@@ -292,9 +291,18 @@ def main():
     samples, predictors = load_model_data(
         ("development", "test")
     )
+    if len(predictors) != 484:
+        raise ValueError(f"Expected 484 predictors; found {len(predictors)}.")
 
     development = samples["development"]
     test = samples["test"]
+
+    if development["month"].max() != pd.Timestamp("2019-12-31"):
+        raise ValueError("Development sample must end in December 2019.")
+    if test["month"].min() != pd.Timestamp("2020-01-31"):
+        raise ValueError("Test sample must begin in January 2020.")
+    if test["month"].max() != pd.Timestamp("2025-12-31"):
+        raise ValueError("Test sample must end in December 2025.")
     development_mean = development[TARGET].mean()
 
     test_sample = {"test": test}
